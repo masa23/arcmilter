@@ -30,6 +30,10 @@ archives:
       {{- else }}{{ .Arch }}{{ end }}
       {{- if .Arm }}v{{ .Arm }}{{ end -}}
 
+release:
+  extra_files:
+    - glob: CREDITS
+
 nfpms:
   - id: arcmilter
     file_name_template: "{{ .ProjectName }}_{{ .Version }}-1_{{ .Arch }}"
@@ -54,7 +58,13 @@ nfpms:
       - dst: /etc/arcmilter/arcmilter.yaml
         src: cmd/arcmilter/arcmilter.yaml.sample
         type: config
+      - dst: /usr/share/doc/arcmilter/CREDITS
+        src: CREDITS
       - dst: /var/run/arcmilter
+        type: dir
+        file_info:
+          mode: 0755
+      - dst: /var/share/arcmilter
         type: dir
         file_info:
           mode: 0755
