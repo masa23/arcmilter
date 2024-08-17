@@ -29,6 +29,13 @@ archives:
       {{- else if eq .Arch "386" }}i386
       {{- else }}{{ .Arch }}{{ end }}
       {{- if .Arm }}v{{ .Arm }}{{ end -}}
+    files:
+      - CREDITS
+      - LICENSE
+      - README.md
+      - README.ja.md
+      - src: cmd/arcmilter/arcmilter.yaml.sample
+        dst: arcmilter.yaml.sample
 
 nfpms:
   - id: arcmilter
@@ -54,7 +61,13 @@ nfpms:
       - dst: /etc/arcmilter/arcmilter.yaml
         src: cmd/arcmilter/arcmilter.yaml.sample
         type: config
+      - dst: /usr/share/doc/arcmilter/CREDITS
+        src: CREDITS
       - dst: /var/run/arcmilter
+        type: dir
+        file_info:
+          mode: 0755
+      - dst: /usr/share/doc/arcmilter
         type: dir
         file_info:
           mode: 0755
@@ -62,4 +75,3 @@ nfpms:
         type: dir
         file_info:
           mode: 0700
-        
