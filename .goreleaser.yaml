@@ -1,0 +1,65 @@
+version: 2
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - dir: cmd/arcmilter
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+archives:
+  - name_template: >-
+      {{- .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end -}}
+
+nfpms:
+  - id: arcmilter
+    file_name_template: "{{ .ProjectName }}_{{ .Version }}-1_{{ .Arch }}"
+    builds:
+      - arcmilter
+    homepage: https://github.com/masa23/arcmilter
+    maintainer: Masafumi Yamamoto <masa23@gmail.com>
+    description: ARC Milter is a milter for DKIM/ARC verification and signing.
+    license: MIT
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    section: mail
+    scripts:
+      preinstall: misc/scripts/preinstall.sh
+      postinstall: misc/scripts/postinstall.sh
+    contents:
+      - dst: /lib/systemd/system/arcmilter.service
+        src: misc/files/arcmilter.service
+        type: config
+      - dst: /etc/arcmilter/arcmilter.yaml
+        src: cmd/arcmilter/arcmilter.yaml.sample
+        type: config
+      - dst: /var/run/arcmilter
+        type: dir
+        file_info:
+          mode: 0755
+      - dst: /etc/arcmilter
+        type: dir
+        file_info:
+          mode: 0700
+        
