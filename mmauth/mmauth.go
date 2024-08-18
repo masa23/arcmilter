@@ -2,7 +2,6 @@ package mmauth
 
 import (
 	"bufio"
-	"crypto"
 	"fmt"
 	"io"
 
@@ -29,15 +28,6 @@ const (
 	SignatureAlgorithmRSA_SHA256     SignatureAlgorithm = "rsa-sha256"
 	SignatureAlgorithmED25519_SHA256 SignatureAlgorithm = "ed25519-sha256"
 )
-
-// ヘッダの正規化と署名アルゴリズムの組み合わせ
-type CanonicalizationAndAlgorithm struct {
-	Header    Canonicalization
-	Body      Canonicalization
-	Algorithm SignatureAlgorithm
-	HashAlgo  crypto.Hash
-	Limit     int64
-}
 
 // 認証ヘッダを保持する構造体
 type AuthenticationHeaders struct {
