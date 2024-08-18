@@ -2,7 +2,6 @@ package mmauth
 
 import (
 	"bufio"
-	"crypto"
 	"fmt"
 	"io"
 
@@ -29,14 +28,6 @@ const (
 	SignatureAlgorithmRSA_SHA256     SignatureAlgorithm = "rsa-sha256"
 	SignatureAlgorithmED25519_SHA256 SignatureAlgorithm = "ed25519-sha256"
 )
-
-// ヘッダの正規化と署名アルゴリズムの組み合わせ
-type CanonicalizationAndAlgorithm struct {
-	Header    Canonicalization
-	Body      Canonicalization
-	Algorithm SignatureAlgorithm
-	HashAlgo  crypto.Hash
-}
 
 // 認証ヘッダを保持する構造体
 type AuthenticationHeaders struct {
@@ -94,7 +85,6 @@ func (a *AuthenticationHeaders) BodyHashCanonAndAlgo() []BodyCanonicalizationAnd
 
 // DKIMとARCの署名の検証を行うための構造体
 type MMAuth struct {
-	canonnAndAlgo         *CanonicalizationAndAlgorithm
 	AuthenticationHeaders *AuthenticationHeaders
 	Headers               headers
 	pw                    *io.PipeWriter
@@ -235,27 +225,12 @@ func NewMMAuth() *MMAuth {
 	m := &MMAuth{
 		pw:   pw,
 		done: done,
-		canonnAndAlgo: &CanonicalizationAndAlgorithm{
-			Header:    CanonicalizationRelaxed,
-			Body:      CanonicalizationRelaxed,
-			Algorithm: SignatureAlgorithmRSA_SHA256,
-			HashAlgo:  hashAlgo(SignatureAlgorithmRSA_SHA256),
-		},
 	}
 
 	// メールデータを読み込んで解析する
 	go m.parsedMail(pr)
 
 	return m
-}
-
-func (m *MMAuth) SetCanonicalizationAndAlgorithm(c *CanonicalizationAndAlgorithm) {
-	m.canonnAndAlgo = c
-	// bodyhashの生成対象に追加
-	m.AddBodyHash(BodyCanonicalizationAndAlgorithm{
-		Body:      c.Body,
-		Algorithm: c.HashAlgo,
-	})
 }
 
 // ヘッダ、本文の書き込み
@@ -279,6 +254,7 @@ func (m *MMAuth) Verify() {
 			bodyHash := m.GetBodyHash(BodyCanonicalizationAndAlgorithm{
 				Body:      Canonicalization(can.Body),
 				Algorithm: can.HashAlgo,
+				Limit:     d.Limit,
 			})
 			d.Verify(m.Headers, bodyHash, nil)
 		}
@@ -292,6 +268,7 @@ func (m *MMAuth) Verify() {
 			bodyHash := m.GetBodyHash(BodyCanonicalizationAndAlgorithm{
 				Body:      Canonicalization(can.Body),
 				Algorithm: can.HashAlgo,
+				Limit:     0,
 			})
 			arc.Verify(m.Headers, bodyHash, nil)
 		}
@@ -300,7 +277,7 @@ func (m *MMAuth) Verify() {
 
 func (m *MMAuth) GetBodyHash(bca BodyCanonicalizationAndAlgorithm) string {
 	for _, bh := range m.bodyHashed {
-		if bh.Algorithm.Algorithm == bca.Algorithm && bh.Algorithm.Body == bca.Body {
+		if bh.Algorithm.Algorithm == bca.Algorithm && bh.Algorithm.Body == bca.Body && bh.Limit == bca.Limit {
 			return bh.BodyHash
 		}
 	}

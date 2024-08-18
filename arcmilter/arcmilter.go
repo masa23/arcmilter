@@ -29,11 +29,13 @@ type Hash string
 type Session struct {
 	milter.NoOpMilter
 	isARCSign  bool
+	isDKIMSign bool
 	helo       string
 	remoteAddr string
 	rcptTo     string
 	mailFrom   string
 	from       string
+	fromDomain string
 	conf       *config.Config
 	mmauth     *mmauth.MMAuth
 }
@@ -103,10 +105,10 @@ func (s *Session) RcptTo(rcptTo string, esmtpArgs string, m *milter.Modifier) (*
 	if domain, ok := (s.conf.Domains)[domain]; ok {
 		// 宛先が対象ドメインならARC署名を行う
 		s.isARCSign = true
-		s.mmauth.SetCanonicalizationAndAlgorithm(&mmauth.CanonicalizationAndAlgorithm{
-			Header:   mmauth.Canonicalization(domain.HeaderCanonicalization),
-			Body:     mmauth.Canonicalization(domain.BodyCanonicalization),
-			HashAlgo: domain.HashAlgo,
+		s.mmauth.AddBodyHash(mmauth.BodyCanonicalizationAndAlgorithm{
+			Body:      mmauth.Canonicalization(domain.BodyCanonicalization),
+			Algorithm: domain.HashAlgo,
+			Limit:     0,
 		})
 		return milter.RespContinue, nil
 	}
@@ -118,13 +120,23 @@ func (s *Session) Header(name, value string, m *milter.Modifier) (*milter.Respon
 	switch strings.ToLower(name) {
 	case "from":
 		s.from = value
-		if domain, ok := (s.conf.Domains)[s.from]; ok {
+		fromDomain, err := mmauth.ParseAddressDomain(value)
+		if err != nil {
+			log.Printf("util.ParseAddressDomain: %v", err)
+			s.isDKIMSign = false
+			return milter.RespContinue, nil
+		}
+		s.fromDomain = fromDomain
+
+		if domain, ok := (s.conf.Domains)[s.fromDomain]; ok {
 			// 送信元が対象ドメインなら正規化とハッシュアルゴリズムを設定
-			s.mmauth.SetCanonicalizationAndAlgorithm(&mmauth.CanonicalizationAndAlgorithm{
-				Header:   mmauth.Canonicalization(domain.HeaderCanonicalization),
-				Body:     mmauth.Canonicalization(domain.BodyCanonicalization),
-				HashAlgo: domain.HashAlgo,
+			s.mmauth.AddBodyHash(mmauth.BodyCanonicalizationAndAlgorithm{
+				Body:      mmauth.Canonicalization(domain.BodyCanonicalization),
+				Algorithm: domain.HashAlgo,
+				Limit:     0,
 			})
+			// DKIM署名を行う
+			s.isDKIMSign = true
 		}
 		return milter.RespContinue, nil
 	}
@@ -148,9 +160,7 @@ func (s *Session) BodyChunk(chunk []byte, m *milter.Modifier) (*milter.Response,
 }
 
 func DKIMSign(s *Session, m *milter.Modifier) {
-	domain, err := mmauth.ParseAddressDomain(s.from)
-	if err != nil {
-		log.Printf("util.ParseAddressDomain: %v", err)
+	if !s.isDKIMSign {
 		return
 	}
 
@@ -161,10 +171,11 @@ func DKIMSign(s *Session, m *milter.Modifier) {
 	}
 
 	// 対応するドメインのキーがある場合はDKIM署名を行う
-	if domain, ok := (s.conf.Domains)[domain]; ok && domain.DKIM {
+	if domain, ok := (s.conf.Domains)[s.fromDomain]; ok && domain.DKIM {
 		bodyHash := s.mmauth.GetBodyHash(mmauth.BodyCanonicalizationAndAlgorithm{
 			Body:      mmauth.Canonicalization(domain.BodyCanonicalization),
 			Algorithm: domain.HashAlgo,
+			Limit:     0,
 		})
 
 		// DKIM署名
@@ -219,6 +230,7 @@ func ARCSign(s *Session, m *milter.Modifier) {
 				mmauth.BodyCanonicalizationAndAlgorithm{
 					Body:      mmauth.CanonicalizationRelaxed,
 					Algorithm: crypto.SHA256,
+					Limit:     0,
 				},
 			),
 		}
