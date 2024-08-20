@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func Test_ceckPidFile(t *testing.T) {
+func Test_checkPidFile(t *testing.T) {
 	pidFile := "test.pid"
 	defer func() {
 		if err := os.Remove(pidFile); err != nil && !errors.Is(err, os.ErrNotExist) {
