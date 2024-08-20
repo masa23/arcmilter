@@ -10,12 +10,12 @@ import (
 )
 
 func Test_ceckPidFile(t *testing.T) {
+	pidFile := "test.pid"
 	defer func() {
-		if err := os.Remove("test.pid"); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := os.Remove(pidFile); err != nil && !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("failed to remove pid file: %v", err)
 		}
 	}()
-	pidFile := "test.pid"
 	// remove pid file
 	if err := os.Remove(pidFile); err != nil && !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("failed to remove pid file: %v", err)
