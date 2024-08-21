@@ -10,6 +10,9 @@ PIDFile:
 LogFile:
   Path: ./t/tmp/arcmilter.log
   Mode: 0600
+MyNetworks:
+  - 127.0.0.0/8
+  - ::1/128
 Domains:
   "example.jp":
     HeaderCanonicalization: "relaxed"

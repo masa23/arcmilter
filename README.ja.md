@@ -65,6 +65,9 @@ DKIM署名およびARCの署名を行うmilterです。
   LogFile:
     Path: /var/log/arcmilter.log
     Mode: 0600
+  MyNetworks:
+  - 127.0.0.0/8
+  - ::1/128
   Domains:
     "example.jp": // DKIM署名するFromのドメイン、ARC署名するRcpt-Toのドメイン
       HeaderCanonicalization: "relaxed" // ヘッダの正規化方法

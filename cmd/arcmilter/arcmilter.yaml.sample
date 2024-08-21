@@ -28,6 +28,9 @@ Domains:
     PrivateKeyFile: "/etc/arcmilter/keys/example.com.key"
     DKIM: true
     ARC: true
+MyNetworks:
+  - 127.0.0.0/8
+  - ::1/128
 User: mail
 Group: mail
 ARCSignHeaders:
