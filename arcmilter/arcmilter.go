@@ -103,14 +103,14 @@ func (s *Session) RcptTo(rcptTo string, esmtpArgs string, m *milter.Modifier) (*
 	if s.authn != "" || s.conf.IsMyNetwork(s.remoteAddr) {
 		return milter.RespContinue, nil
 	}
-	domain, err := mmauth.ParseAddressDomain(rcptTo)
+	rpctToDomain, err := mmauth.ParseAddressDomain(rcptTo)
 	if err != nil {
 		log.Printf("util.ParseAddressDomain: %v", err)
 		return milter.RespContinue, nil
 	}
-	s.rcptToDomain = domain
+	s.rcptToDomain = rpctToDomain
 	// 署名の準備
-	if domain, ok := (s.conf.Domains)[domain]; ok {
+	if domain, ok := (s.conf.Domains)[rpctToDomain]; ok {
 		// 宛先が対象ドメインならARC署名を行う
 		s.isARCSign = true
 		s.mmauth.AddBodyHash(mmauth.BodyCanonicalizationAndAlgorithm{
