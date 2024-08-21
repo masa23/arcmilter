@@ -55,7 +55,7 @@ I welcome feedback and pull requests.
   #MilterListen:
   #  Network: unix
   #  Address: /var/run/arcmilter.sock
-  #  Mode: 0660
+  #  Mode: 0600
   ControlSocketFile:
     Path: /var/run/arcmilterctl.sock
     Mode: 0600
