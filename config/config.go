@@ -82,9 +82,14 @@ func Load(path string) (*Config, error) {
 		return nil, errors.New("MilterListen.Address is not set")
 	}
 
-	// MilterListen Modeが設定されていなければ0666にする
+	// MilterListen Modeが設定されていなければ0600にする
 	if config.MilterListen.Mode == 0 {
 		config.MilterListen.Mode = 0600
+	}
+
+	// PidFile Pathが設定されているか確認
+	if config.PidFile.Path == "" {
+		return nil, errors.New("PIDFile is not set")
 	}
 
 	// ControlSocketファイルのパスが設定されているか確認
@@ -92,9 +97,19 @@ func Load(path string) (*Config, error) {
 		return nil, errors.New("ControlSocketFile.Path is not set")
 	}
 
+	// ControlSocket Modeが設定されていなければ0600にする
+	if config.ControlSocketFile.Mode == 0 {
+		config.ControlSocketFile.Mode = 0600
+	}
+
 	// PIDファイルのパスが設定されているか確認
 	if config.PidFile.Path == "" {
 		return nil, errors.New("PIDFile is not set")
+	}
+
+	// LogFIle Modeが設定されていなければ0600にする
+	if config.LogFile.Mode == 0 {
+		config.LogFile.Mode = 0600
 	}
 
 	// Domainsが設定されていなければエラー
@@ -185,10 +200,32 @@ func Load(path string) (*Config, error) {
 			return nil, err
 		}
 		config.Uid = uid
+	} else {
+		// ユーザーが設定されていなければ自分自身のUIDを取得
+		u, err := user.Current()
+		if err != nil {
+			return nil, err
+		}
+		uid, err := strconv.Atoi(u.Uid)
+		if err != nil {
+			return nil, err
+		}
+		config.Uid = uid
 	}
 	// GroupをGIDに変換
 	if config.Group != "" {
 		g, err := user.LookupGroup(config.Group)
+		if err != nil {
+			return nil, err
+		}
+		gid, err := strconv.Atoi(g.Gid)
+		if err != nil {
+			return nil, err
+		}
+		config.Gid = gid
+	} else {
+		// グループが設定されていなければ自分自身のGIDを取得
+		g, err := user.Current()
 		if err != nil {
 			return nil, err
 		}
