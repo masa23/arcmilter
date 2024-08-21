@@ -94,6 +94,14 @@ func testExec(t *testing.T) {
 	// 起動待ち
 	time.Sleep(500 * time.Millisecond)
 
+	// プロセスが存在するか確認
+	if testExecCmd.Process == nil {
+		t.Fatalf("arcmilter process not running")
+	}
+	if err := testExecCmd.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Fatalf("arcmilter process not running: %v", err)
+	}
+
 	// ファイルの作成とパーミッションの確認
 	for _, f := range testCreateFile {
 		info, err := os.Stat(f.path)
