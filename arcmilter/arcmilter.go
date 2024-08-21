@@ -28,16 +28,17 @@ type Hash string
 
 type Session struct {
 	milter.NoOpMilter
-	isARCSign  bool
-	isDKIMSign bool
-	helo       string
-	remoteAddr string
-	rcptTo     string
-	mailFrom   string
-	from       string
-	fromDomain string
-	conf       *config.Config
-	mmauth     *mmauth.MMAuth
+	isARCSign    bool
+	isDKIMSign   bool
+	helo         string
+	remoteAddr   net.IP
+	rcptToDomain string
+	mailFrom     string
+	from         string
+	fromDomain   string
+	conf         *config.Config
+	mmauth       *mmauth.MMAuth
+	authn        string
 }
 
 func (a *ARCMilter) Serve(l net.Listener, conf *config.Config) error {
@@ -76,7 +77,10 @@ func debugLog(format string, v ...interface{}) {
 
 func (s *Session) Connect(host string, family string, port uint16, addr string, m *milter.Modifier) (*milter.Response, error) {
 	debugLog("Connect: %s", addr)
-	s.remoteAddr = addr
+	s.mmauth = mmauth.NewMMAuth()
+	if ip := net.ParseIP(addr); ip != nil {
+		s.remoteAddr = ip
+	}
 	return milter.RespContinue, nil
 }
 
@@ -87,6 +91,7 @@ func (s *Session) Helo(name string, m *milter.Modifier) (*milter.Response, error
 }
 
 func (s *Session) MailFrom(from string, esmtpArgs string, m *milter.Modifier) (*milter.Response, error) {
+	s.authn = m.Macros.Get(milter.MacroAuthAuthen)
 	s.mailFrom = from
 	debugLog("MailFrom: %s", from)
 	return milter.RespContinue, nil
@@ -94,14 +99,17 @@ func (s *Session) MailFrom(from string, esmtpArgs string, m *milter.Modifier) (*
 
 func (s *Session) RcptTo(rcptTo string, esmtpArgs string, m *milter.Modifier) (*milter.Response, error) {
 	debugLog("RcptTo: %s", rcptTo)
-	s.rcptTo = rcptTo
+	// SMTP認証済みもしくはIPアドレスがMyNetworksに含まれている場合はARC署名を行わない
+	if s.authn != "" || s.conf.IsMyNetwork(s.remoteAddr) {
+		return milter.RespContinue, nil
+	}
 	domain, err := mmauth.ParseAddressDomain(rcptTo)
 	if err != nil {
 		log.Printf("util.ParseAddressDomain: %v", err)
 		return milter.RespContinue, nil
 	}
+	s.rcptToDomain = domain
 	// 署名の準備
-	s.mmauth = mmauth.NewMMAuth()
 	if domain, ok := (s.conf.Domains)[domain]; ok {
 		// 宛先が対象ドメインならARC署名を行う
 		s.isARCSign = true
@@ -204,13 +212,11 @@ func DKIMSign(s *Session, m *milter.Modifier) {
 }
 
 func ARCSign(s *Session, m *milter.Modifier) {
-	rcptDomain, err := mmauth.ParseAddressDomain(s.rcptTo)
-	if err != nil {
-		log.Printf("util.ParseAddressDomain: %v", err)
+	if !s.isARCSign {
 		return
 	}
 
-	if domain, ok := (s.conf.Domains)[rcptDomain]; ok && domain.ARC {
+	if domain, ok := (s.conf.Domains)[s.rcptToDomain]; ok && domain.ARC {
 		ah := s.mmauth.AuthenticationHeaders.ARCSignatures
 
 		// ARC-Chain-Validation-Resultがfailの場合はARC署名を行わない
@@ -223,7 +229,7 @@ func ARCSign(s *Session, m *milter.Modifier) {
 		signature := arc.ARCMessageSignature{
 			InstanceNumber:   instanceNumber,
 			Algorithm:        arc.SignatureAlgorithmRSA_SHA256,
-			Domain:           rcptDomain,
+			Domain:           s.rcptToDomain,
 			Selector:         "default",
 			Canonicalization: domain.HeaderCanonicalization + "/" + domain.BodyCanonicalization,
 			BodyHash: s.mmauth.GetBodyHash(
@@ -243,10 +249,11 @@ func ARCSign(s *Session, m *milter.Modifier) {
 
 		// SPF Check
 		var results []string
-		ip := net.ParseIP(s.remoteAddr)
-		res, _ := spf.Check(context.Background(), ip, s.mailFrom, s.helo)
-		results = append(results,
-			fmt.Sprintf("spf=%s smtp.mailfrom=%s smtp.hello=%s", res.String(), s.mailFrom, s.helo))
+		if s.remoteAddr != nil {
+			res, _ := spf.Check(context.Background(), s.remoteAddr, s.mailFrom, s.helo)
+			results = append(results,
+				fmt.Sprintf("spf=%s smtp.mailfrom=%s smtp.hello=%s", res.String(), s.mailFrom, s.helo))
+		}
 
 		// DKIM
 		ad := s.mmauth.AuthenticationHeaders.DKIMSignatures
@@ -262,7 +269,7 @@ func ARCSign(s *Session, m *milter.Modifier) {
 
 		result := arc.ARCAuthenticationResults{
 			InstanceNumber: instanceNumber,
-			AuthServId:     rcptDomain,
+			AuthServId:     s.rcptToDomain,
 			Results:        results,
 		}
 
@@ -270,7 +277,7 @@ func ARCSign(s *Session, m *milter.Modifier) {
 		seal := arc.ARCSeal{
 			InstanceNumber: instanceNumber,
 			Algorithm:      arc.SignatureAlgorithmRSA_SHA256,
-			Domain:         rcptDomain,
+			Domain:         s.rcptToDomain,
 			Selector:       domain.Selector,
 			ChainValidation: arc.ChainValidationResult(
 				s.mmauth.AuthenticationHeaders.ARCSignatures.GetVerifyResult(),
@@ -280,7 +287,7 @@ func ARCSign(s *Session, m *milter.Modifier) {
 		headers = append(headers, "ARC-Authentication-Results: "+result.String())
 		headers = append(headers, "ARC-Message-Signature: "+signature.String())
 
-		if seal.Sign(headers, domain.PrivateKeySigner) != nil {
+		if err := seal.Sign(headers, domain.PrivateKeySigner); err != nil {
 			log.Printf("seal.Sign: %v", err)
 			return
 		}

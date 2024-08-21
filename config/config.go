@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/user"
 	"strconv"
@@ -34,14 +35,16 @@ type Config struct {
 		Path string `yaml:"Path"`
 		Mode uint32 `yaml:"Mode"`
 	} `yaml:"LogFile"`
-	Domains         map[string]Domain `yaml:"Domains"`
-	User            string            `yaml:"User"`
-	Group           string            `yaml:"Group"`
-	Uid             int
-	Gid             int
-	Debug           bool     `yaml:"Debug"`
-	ARCSignHeaders  []string `yaml:"ARCSignHeaders"`
-	DKIMSignHeaders []string `yaml:"DKIMSignHeaders"`
+	MyNetworks       []string `yaml:"MyNetworks"`
+	ParsedMyNetworks []*net.IPNet
+	Domains          map[string]Domain `yaml:"Domains"`
+	User             string            `yaml:"User"`
+	Group            string            `yaml:"Group"`
+	Uid              int
+	Gid              int
+	Debug            bool     `yaml:"Debug"`
+	ARCSignHeaders   []string `yaml:"ARCSignHeaders"`
+	DKIMSignHeaders  []string `yaml:"DKIMSignHeaders"`
 }
 
 type Domain struct {
@@ -105,6 +108,19 @@ func Load(path string) (*Config, error) {
 	// LogFIle Modeが設定されていなければ0600にする
 	if config.LogFile.Mode == 0 {
 		config.LogFile.Mode = 0600
+	}
+
+	// MyNetworksが設定されていなければエラー
+	if len(config.MyNetworks) == 0 {
+		return nil, errors.New("MyNetwork is not set")
+	}
+	// MyNetworksをパースする
+	for _, network := range config.MyNetworks {
+		_, ipNet, err := net.ParseCIDR(network)
+		if err != nil {
+			return nil, err
+		}
+		config.ParsedMyNetworks = append(config.ParsedMyNetworks, ipNet)
 	}
 
 	// Domainsが設定されていなければエラー
@@ -245,4 +261,14 @@ func Load(path string) (*Config, error) {
 	config.Path = path
 
 	return &config, nil
+}
+
+// IsMyNetwork は指定されたIPアドレスが自分のネットワークに含まれるかを返す
+func (c *Config) IsMyNetwork(ip net.IP) bool {
+	for _, ipNet := range c.ParsedMyNetworks {
+		if ipNet.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }

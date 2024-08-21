@@ -64,6 +64,9 @@ I welcome feedback and pull requests.
   LogFile:
     Path: /var/log/arcmilter.log
     Mode: 0600
+  MyNetworks:
+  - 127.0.0.0/8
+  - ::1/128
   Domains:
     "example.jp": // Domain for DKIM signing in From field, and ARC signing in Rcpt-To field
       HeaderCanonicalization: "relaxed" // Header normalization method
