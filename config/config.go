@@ -102,11 +102,6 @@ func Load(path string) (*Config, error) {
 		config.ControlSocketFile.Mode = 0600
 	}
 
-	// PIDファイルのパスが設定されているか確認
-	if config.PidFile.Path == "" {
-		return nil, errors.New("PIDFile is not set")
-	}
-
 	// LogFIle Modeが設定されていなければ0600にする
 	if config.LogFile.Mode == 0 {
 		config.LogFile.Mode = 0600
