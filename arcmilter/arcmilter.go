@@ -24,8 +24,6 @@ type ARCMilter struct {
 	ctrl *rpc.Client
 }
 
-type Hash string
-
 type Session struct {
 	milter.NoOpMilter
 	isARCSign    bool
@@ -52,7 +50,7 @@ func (a *ARCMilter) Serve(l net.Listener, conf *config.Config) error {
 			milter.OptNoMailReply|milter.OptNoRcptReply|milter.OptNoDataReply|
 			milter.OptNoUnknownReply|milter.OptNoEOHReply|milter.OptNoBodyReply),
 		milter.WithAction(milter.OptChangeFrom|milter.OptAddRcpt|milter.OptRemoveRcpt|milter.OptChangeHeader),
-		milter.WithMacroRequest(milter.StageHelo, []milter.MacroName{milter.MacroAuthType, milter.MacroMailAddr}),
+		milter.WithMacroRequest(milter.StageHelo, []milter.MacroName{milter.MacroAuthAuthen}),
 	)
 	defer server.Close()
 	log.Printf("Start milter server")

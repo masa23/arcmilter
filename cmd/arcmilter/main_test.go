@@ -2,16 +2,20 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"math/rand"
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/d--j/go-milter"
+	"github.com/masa23/arcmilter/mmauth/arc"
+	"github.com/masa23/arcmilter/mmauth/dkim"
 )
 
 // Testの初期化
@@ -115,20 +119,339 @@ func testExec(t *testing.T) {
 }
 
 func testMilter(t *testing.T) {
-	// milterに接続して、テストデータを流す
 	client := milter.NewClient("unix", "./t/tmp/arcmilter.sock")
 	globalMacros := milter.NewMacroBag()
 	globalMacros.Set(milter.MacroMTAFQDN, "example.jp")
 	globalMacros.Set(milter.MacroMTAPid, strconv.Itoa(os.Getpid()))
 
-	macros := globalMacros.Copy()
-	session, err := client.Session(macros)
-	if err != nil {
-		t.Fatalf("failed to create milter session: %v", err)
+	testCase := []struct {
+		name          string
+		connHostname  string
+		connFamily    milter.ProtoFamily
+		connPort      uint16
+		connAddr      string
+		authUser      string
+		heloHostname  string
+		mailSender    string
+		mailEsmtpArgs string
+		rcptRcpt      string
+		rcptEsmtpArgs string
+		headers       []struct {
+			field string
+			value string
+		}
+		body               string
+		expectDKIM         *dkim.Signature
+		expectARCSignature *arc.ARCMessageSignature
+		expectARCResults   *arc.ARCAuthenticationResults
+		expectARCSeal      *arc.ARCSeal
+	}{
+		{
+			// DKIMの署名だけを行うテスト
+			// Fromが署名対象である
+			// connAddrが127.0.0.1のためARC署名は行われない
+			name:         "DKIM sign only with MyNetworks",
+			connHostname: "localhost",
+			connFamily:   milter.FamilyInet,
+			connPort:     10025,
+			connAddr:     "127.0.0.1",
+			heloHostname: "localhost",
+			mailSender:   "<test@example.jp>",
+			rcptRcpt:     "<outside@example.com>",
+			headers: []struct {
+				field string
+				value string
+			}{
+				{
+					field: "From",
+					value: "test@example.jp",
+				},
+				{
+					field: "To",
+					value: "outside@example.com",
+				},
+			},
+			body: "test\r\n",
+			expectDKIM: &dkim.Signature{
+				Algorithm:        "rsa-sha256",
+				BodyHash:         "g3zLYH4xKxcPrHOD18z9YfpQcnk/GaJedfustWU5uGs=",
+				Domain:           "example.jp",
+				Selector:         "default",
+				Canonicalization: "relaxed/relaxed",
+				Headers:          "from:to",
+				Version:          1,
+			},
+		},
+		{
+			// DKIMの署名だけを行うテスト
+			// Fromが署名対象である
+			// SMTP Auth認証がされているためARC署名は行われない
+			name:         "DKIM sign only with SMTP Auth",
+			connHostname: "mail.example.net",
+			connFamily:   milter.FamilyInet,
+			connPort:     10025,
+			connAddr:     "192.0.2.1",
+			heloHostname: "mail.example.net",
+			mailSender:   "<test@example.jp>",
+			rcptRcpt:     "<outside@example.com>",
+			authUser:     "login-user",
+			headers: []struct {
+				field string
+				value string
+			}{
+				{
+					field: "From",
+					value: "test@example.jp",
+				},
+				{
+					field: "To",
+					value: "outside@example.com",
+				},
+			},
+			body: "test\r\n",
+			expectDKIM: &dkim.Signature{
+				Algorithm:        "rsa-sha256",
+				BodyHash:         "g3zLYH4xKxcPrHOD18z9YfpQcnk/GaJedfustWU5uGs=",
+				Domain:           "example.jp",
+				Selector:         "default",
+				Canonicalization: "relaxed/relaxed",
+				Headers:          "from:to",
+				Version:          1,
+			},
+		},
+		{
+			// ARC署名だけを行うテスト
+			// RcptToがARC署名対象である
+			// MyNetworksに含まれないためARC署名対象である
+			name:         "ARC sign only",
+			connHostname: "example.com",
+			connFamily:   milter.FamilyInet,
+			connPort:     10025,
+			connAddr:     "192.0.2.1",
+			heloHostname: "example.com",
+			mailSender:   "<test@example.com>",
+			rcptRcpt:     "<recive@example.jp>",
+			headers: []struct {
+				field string
+				value string
+			}{
+				{
+					field: "From",
+					value: "test@example.com",
+				},
+				{
+					field: "To",
+					value: "recive@example.jp",
+				},
+			},
+			body: "test\r\n",
+			expectARCSignature: &arc.ARCMessageSignature{
+				InstanceNumber:   1,
+				Algorithm:        "rsa-sha256",
+				BodyHash:         "g3zLYH4xKxcPrHOD18z9YfpQcnk/GaJedfustWU5uGs=",
+				Canonicalization: "relaxed/relaxed",
+				Domain:           "example.jp",
+				Selector:         "default",
+				Headers:          "from:to",
+			},
+			expectARCResults: &arc.ARCAuthenticationResults{
+				InstanceNumber: 1,
+				AuthServId:     "example.jp",
+				Results: []string{
+					"spf=fail smtp.mailfrom=<test@example.com> smtp.hello=example.com",
+					"arc=none",
+				},
+			},
+			expectARCSeal: &arc.ARCSeal{
+				InstanceNumber:  1,
+				Algorithm:       "rsa-sha256",
+				ChainValidation: arc.ChainValidationResultNone,
+				Domain:          "example.jp",
+				Selector:        "default",
+			},
+		},
 	}
-	defer session.Close()
 
-	// ToDo: テストデータの作成
+	for _, tc := range testCase {
+		macros := globalMacros.Copy()
+		session, err := client.Session(macros)
+		if err != nil {
+			log.Fatalf("failed to create milter session: %v", err)
+		}
+		handleMilterResponse := func(act *milter.Action, err error) {
+			if err != nil {
+				t.Fatalf("failed to handle milter response: %v", err)
+			}
+			if act.StopProcessing() {
+				t.Fatalf("unexpected stop processing: %s", act.SMTPReply)
+			}
+			if act.Type == milter.ActionDiscard {
+				t.Fatalf("unexpected discard: %s", act.SMTPReply)
+			}
+		}
+
+		handleMilterResponse(session.Conn(tc.connHostname, tc.connFamily, tc.connPort, tc.connAddr))
+		handleMilterResponse(session.Helo(tc.heloHostname))
+		if tc.authUser != "" {
+			macros.Set(milter.MacroAuthAuthen, tc.authUser)
+		}
+		handleMilterResponse(session.Mail(tc.mailSender, tc.mailEsmtpArgs))
+		handleMilterResponse(session.Rcpt(tc.rcptRcpt, tc.rcptEsmtpArgs))
+		handleMilterResponse(session.DataStart())
+		for _, header := range tc.headers {
+			handleMilterResponse(session.HeaderField(header.field, header.value, nil))
+		}
+		handleMilterResponse(session.HeaderEnd())
+		mActs, act, err := session.BodyReadFrom(strings.NewReader(tc.body))
+		if err != nil {
+			t.Fatalf("failed to read body: %v", err)
+		}
+		if act.StopProcessing() {
+			t.Fatalf("unexpected stop processing: %s", act.SMTPReply)
+		}
+
+		for _, header := range []string{"DKIM-Signature", "ARC-Message-Signature", "ARC-Authentication-Results", "ARC-Seal"} {
+			found := false
+			for _, mAct := range mActs {
+				if strings.EqualFold(mAct.HeaderName, header) {
+					found = true
+					break
+				}
+			}
+			switch header {
+			case "DKIM-Signature":
+				if !found && tc.expectDKIM != nil {
+					t.Fatalf("missing header: %s", header)
+				}
+			case "ARC-Message-Signature":
+				if !found && tc.expectARCSignature != nil {
+					t.Fatalf("missing header: %s", header)
+				}
+			case "ARC-Authentication-Results":
+				if !found && tc.expectARCResults != nil {
+					t.Fatalf("missing header: %s", header)
+				}
+			case "ARC-Seal":
+				if !found && tc.expectARCSeal != nil {
+					t.Fatalf("missing header: %s", header)
+				}
+			}
+		}
+
+		for _, mAct := range mActs {
+			if mAct.Type == milter.ActionInsertHeader {
+				if strings.EqualFold(mAct.HeaderName, "DKIM-Signature") {
+					if tc.expectDKIM == nil {
+						t.Fatalf("unexpected DKIM-Signature: %s", mAct.HeaderValue)
+					}
+					d, err := dkim.ParseSignature(fmt.Sprintf("%s: %s", mAct.HeaderName, mAct.HeaderValue))
+					if err != nil {
+						t.Fatalf("failed to parse DKIM-Signature: %v", err)
+					}
+					e := tc.expectDKIM
+					if d.Algorithm != e.Algorithm {
+						t.Fatalf("algorithm mismatch: %s != %s", d.Algorithm, e.Algorithm)
+					}
+					if d.BodyHash != e.BodyHash {
+						t.Fatalf("body hash mismatch: %s != %s", d.BodyHash, e.BodyHash)
+					}
+					if !strings.EqualFold(d.Domain, e.Domain) {
+						t.Fatalf("domain mismatch: %s != %s", d.Domain, e.Domain)
+					}
+					if !strings.EqualFold(d.Selector, e.Selector) {
+						t.Fatalf("selector mismatch: %s != %s", d.Selector, e.Selector)
+					}
+					if d.Canonicalization != e.Canonicalization {
+						t.Fatalf("canonicalization mismatch: %s != %s", d.Canonicalization, e.Canonicalization)
+					}
+					if !strings.EqualFold(d.Headers, e.Headers) {
+						t.Fatalf("headers mismatch: %s != %s", d.Headers, e.Headers)
+					}
+					if d.Version != e.Version {
+						t.Fatalf("version mismatch: %d != %d", d.Version, e.Version)
+					}
+				}
+				if strings.EqualFold(mAct.HeaderName, "ARC-Message-Signature") {
+					if tc.expectARCSignature == nil {
+						t.Fatalf("unexpected ARC-Message-Signature: %s", mAct.HeaderValue)
+					}
+					d, err := arc.ParseARCMessageSignature(fmt.Sprintf("%s: %s", mAct.HeaderName, mAct.HeaderValue))
+					if err != nil {
+						t.Fatalf("failed to parse ARC-Message-Signature: %v", err)
+					}
+					e := tc.expectARCSignature
+					if d.InstanceNumber != e.InstanceNumber {
+						t.Fatalf("instance number mismatch: %d != %d", d.InstanceNumber, e.InstanceNumber)
+					}
+					if d.Algorithm != e.Algorithm {
+						t.Fatalf("algorithm mismatch: %s != %s", d.Algorithm, e.Algorithm)
+					}
+					if d.BodyHash != e.BodyHash {
+						t.Fatalf("body hash mismatch: %s != %s", d.BodyHash, e.BodyHash)
+					}
+					if d.Canonicalization != e.Canonicalization {
+						t.Fatalf("canonicalization mismatch: %s != %s", d.Canonicalization, e.Canonicalization)
+					}
+					if !strings.EqualFold(d.Domain, e.Domain) {
+						t.Fatalf("domain mismatch: %s != %s", d.Domain, e.Domain)
+					}
+					if !strings.EqualFold(d.Selector, e.Selector) {
+						t.Fatalf("selector mismatch: %s != %s", d.Selector, e.Selector)
+					}
+					if !strings.EqualFold(d.Headers, e.Headers) {
+						t.Fatalf("headers mismatch: %s != %s", d.Headers, e.Headers)
+					}
+				}
+				if strings.EqualFold(mAct.HeaderName, "ARC-Authentication-Results") {
+					if tc.expectARCResults == nil {
+						t.Fatalf("unexpected ARC-Authentication-Results: %s", mAct.HeaderValue)
+					}
+					d, err := arc.ParseARCAuthenticationResults(fmt.Sprintf("%s: %s", mAct.HeaderName, mAct.HeaderValue))
+					if err != nil {
+						t.Fatalf("failed to parse ARC-Authentication-Results: %v", err)
+					}
+					e := tc.expectARCResults
+					if d.InstanceNumber != e.InstanceNumber {
+						t.Fatalf("instance number mismatch: %d != %d", d.InstanceNumber, e.InstanceNumber)
+					}
+					if !strings.EqualFold(d.AuthServId, e.AuthServId) {
+						t.Fatalf("domain mismatch: %s != %s", d.AuthServId, e.AuthServId)
+					}
+					for i, r := range d.Results {
+						if !strings.EqualFold(r, e.Results[i]) {
+							t.Fatalf("result mismatch: %s != %s", r, e.Results[i])
+						}
+					}
+				}
+				if strings.EqualFold(mAct.HeaderName, "ARC-Seal") {
+					if tc.expectARCSeal == nil {
+						t.Fatalf("unexpected ARC-Seal: %s", mAct.HeaderValue)
+					}
+					d, err := arc.ParseARCSeal(fmt.Sprintf("%s: %s", mAct.HeaderName, mAct.HeaderValue))
+					if err != nil {
+						t.Fatalf("failed to parse ARC-Seal: %v", err)
+					}
+					e := tc.expectARCSeal
+					if d.InstanceNumber != e.InstanceNumber {
+						t.Fatalf("instance number mismatch: %d != %d", d.InstanceNumber, e.InstanceNumber)
+					}
+					if d.Algorithm != e.Algorithm {
+						t.Fatalf("algorithm mismatch: %s != %s", d.Algorithm, e.Algorithm)
+					}
+					if d.ChainValidation != e.ChainValidation {
+						t.Fatalf("chain validation mismatch: %s != %s", d.ChainValidation, e.ChainValidation)
+					}
+					if !strings.EqualFold(d.Domain, e.Domain) {
+						t.Fatalf("domain mismatch: %s != %s", d.Domain, e.Domain)
+					}
+					if !strings.EqualFold(d.Selector, e.Selector) {
+						t.Fatalf("selector mismatch: %s != %s", d.Selector, e.Selector)
+					}
+				}
+			}
+		}
+		session.Close()
+	}
 }
 
 func testStop(t *testing.T) {
