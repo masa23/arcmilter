@@ -40,29 +40,29 @@ func TestMain(m *testing.M) {
 var testExecCmd *exec.Cmd
 
 var testCreateFile = []struct {
-	path      string
-	permisson os.FileMode
-	stopExist bool
+	path       string
+	permission os.FileMode
+	stopExist  bool
 }{
 	{
-		path:      "./t/tmp/arcmilter.log",
-		permisson: 0600,
-		stopExist: true,
+		path:       "./t/tmp/arcmilter.log",
+		permission: 0600,
+		stopExist:  true,
 	},
 	{
-		path:      "./t/tmp/arcmilter.pid",
-		permisson: 0644,
-		stopExist: false,
+		path:       "./t/tmp/arcmilter.pid",
+		permission: 0644,
+		stopExist:  false,
 	},
 	{
-		path:      "./t/tmp/arcmilter.sock",
-		permisson: 0600,
-		stopExist: true,
+		path:       "./t/tmp/arcmilter.sock",
+		permission: 0600,
+		stopExist:  true,
 	},
 	{
-		path:      "./t/tmp/arcmilterctl.sock",
-		permisson: 0600,
-		stopExist: true,
+		path:       "./t/tmp/arcmilterctl.sock",
+		permission: 0600,
+		stopExist:  true,
 	},
 }
 
@@ -112,7 +112,7 @@ func testExec(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to stat %s: %v", f.path, err)
 		}
-		if info.Mode().Perm() != f.permisson {
+		if info.Mode().Perm() != f.permission {
 			t.Fatalf("unexpected permission %s: %v", f.path, info.Mode().Perm())
 		}
 	}
@@ -126,12 +126,12 @@ func testMilter(t *testing.T) {
 
 	testCase := []struct {
 		name          string
+		connAddr      string
 		connHostname  string
 		connFamily    milter.ProtoFamily
 		connPort      uint16
-		connAddr      string
-		authUser      string
 		heloHostname  string
+		authUser      string
 		mailSender    string
 		mailEsmtpArgs string
 		rcptRcpt      string
@@ -151,10 +151,10 @@ func testMilter(t *testing.T) {
 			// Fromが署名対象である
 			// connAddrが127.0.0.1のためARC署名は行われない
 			name:         "DKIM sign only with MyNetworks",
+			connAddr:     "127.0.0.1",
 			connHostname: "localhost",
 			connFamily:   milter.FamilyInet,
 			connPort:     10025,
-			connAddr:     "127.0.0.1",
 			heloHostname: "localhost",
 			mailSender:   "<test@example.jp>",
 			rcptRcpt:     "<outside@example.com>",
@@ -187,14 +187,14 @@ func testMilter(t *testing.T) {
 			// Fromが署名対象である
 			// SMTP Auth認証がされているためARC署名は行われない
 			name:         "DKIM sign only with SMTP Auth",
+			connAddr:     "192.0.2.1",
 			connHostname: "mail.example.net",
 			connFamily:   milter.FamilyInet,
 			connPort:     10025,
-			connAddr:     "192.0.2.1",
 			heloHostname: "mail.example.net",
+			authUser:     "login-user",
 			mailSender:   "<test@example.jp>",
 			rcptRcpt:     "<outside@example.com>",
-			authUser:     "login-user",
 			headers: []struct {
 				field string
 				value string
@@ -224,10 +224,10 @@ func testMilter(t *testing.T) {
 			// RcptToがARC署名対象である
 			// MyNetworksに含まれないためARC署名対象である
 			name:         "ARC sign only",
+			connAddr:     "192.0.2.1",
 			connHostname: "example.com",
 			connFamily:   milter.FamilyInet,
 			connPort:     10025,
-			connAddr:     "192.0.2.1",
 			heloHostname: "example.com",
 			mailSender:   "<test@example.com>",
 			rcptRcpt:     "<recive@example.jp>",
