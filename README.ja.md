@@ -151,3 +151,7 @@ smtpd_milters = unix:/var/run/arcmilter.sock
   * [k0kubun/pp](https://github.com/k0kubun/pp)
   * [wttw/spf](https://github.com/wttw/spf)
   * [yaml.v3](https://gopkg.in/yaml.v3)
+
+以下のライブラリは制作に当たって参考にさせていただきました。
+
+  * [emersion/go-msgauth](https://github.com/emersion/go-msgauth/)
