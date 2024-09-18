@@ -56,6 +56,8 @@ I welcome feedback and pull requests.
   #  Network: unix
   #  Address: /var/run/arcmilter.sock
   #  Mode: 0600
+  #  Owner: postfix // Default: Execution user
+  #  Group: postfix // Default: Execution group
   ControlSocketFile:
     Path: /var/run/arcmilterctl.sock
     Mode: 0600

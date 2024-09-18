@@ -57,6 +57,8 @@ DKIM署名およびARCの署名を行うmilterです。
   #  Network: unix
   #  Address: /var/run/arcmilter.sock
   #  Mode: 0600
+  #  Owner: postfix // デフォルト: 実行ユーザ
+  #  Group: postfix // デフォルト: 実行グループ
   ControlSocketFile:
     Path: /var/run/arcmilterctl.sock
     Mode: 0600
