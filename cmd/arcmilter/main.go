@@ -318,6 +318,10 @@ func main() {
 		if err := os.Chmod(conf.MilterListen.Address, fs.FileMode(conf.MilterListen.Mode)); err != nil {
 			log.Fatalf("Failed to change socket permission: %v", err)
 		}
+		// socketのオーナーを変更
+		if err := os.Chown(conf.MilterListen.Address, conf.MilterListen.Uid, conf.MilterListen.Gid); err != nil {
+			log.Fatalf("Failed to change socket owner: %v", err)
+		}
 		msockfd, err = msocket.(*net.UnixListener).File()
 		if err != nil {
 			log.Fatalf("Failed to get socket fd: %v", err)

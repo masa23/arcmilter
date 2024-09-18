@@ -26,6 +26,10 @@ type Config struct {
 		Network string `yaml:"Network"`
 		Address string `yaml:"Address"`
 		Mode    uint32 `yaml:"Mode"`
+		Owner   string `yaml:"Owner"`
+		Group   string `yaml:"Group"`
+		Uid     int
+		Gid     int
 	} `yaml:"MilterListen"`
 	ControlSocketFile struct {
 		Path string `yaml:"Path"`
@@ -60,6 +64,61 @@ type Domain struct {
 	ARC                    bool `yaml:"ARC"`
 }
 
+func getUid(userStr string) (int, error) {
+	// 空の場合は自分自身のUIDを取得
+	var uidStr string
+	if userStr == "" {
+		u, err := user.Current()
+		if err != nil {
+			return 0, err
+		}
+		uidStr = u.Uid
+	} else {
+		u, err := user.Lookup(userStr)
+		if err != nil {
+			return 0, err
+		}
+		uidStr = u.Uid
+	}
+	uid, err := strconv.Atoi(uidStr)
+	if err != nil {
+		return 0, err
+	}
+	return uid, nil
+}
+
+func getGid(groupStr string) (int, error) {
+	// 空の場合は自分自身のGIDを取得
+	var gidStr string
+	if groupStr == "" {
+		g, err := user.Current()
+		if err != nil {
+			return 0, err
+		}
+		gidStr = g.Gid
+	} else {
+		g, err := user.LookupGroup(groupStr)
+		if err != nil {
+			return 0, err
+		}
+		gidStr = g.Gid
+	}
+	gid, err := strconv.Atoi(gidStr)
+	if err != nil {
+		return 0, err
+	}
+	return gid, nil
+}
+
+func checkMilterListenNetwork(network string) error {
+	switch network {
+	case "tcp", "unix":
+		return nil
+	default:
+		return fmt.Errorf("invalid MilterListen.Network: %s", network)
+	}
+}
+
 func Load(path string) (*Config, error) {
 	buf, err := os.ReadFile(path)
 	if err != nil {
@@ -74,10 +133,22 @@ func Load(path string) (*Config, error) {
 	}
 
 	// MilterListen Networkのバリデーション
-	switch config.MilterListen.Network {
-	case "unix", "tcp":
-	default:
-		return nil, fmt.Errorf("invalid MilterListen.Network: %s", config.MilterListen.Network)
+	if err := checkMilterListenNetwork(config.MilterListen.Network); err != nil {
+		return nil, err
+	}
+
+	// UnixSocketの場合はOwnerとGroupを設定
+	if config.MilterListen.Network == "unix" {
+		uid, err := getUid(config.MilterListen.Owner)
+		if err != nil {
+			return nil, err
+		}
+		config.MilterListen.Uid = uid
+		gid, err := getGid(config.MilterListen.Group)
+		if err != nil {
+			return nil, err
+		}
+		config.MilterListen.Gid = gid
 	}
 
 	// MilterListen Addressのバリデーション
@@ -201,51 +272,18 @@ func Load(path string) (*Config, error) {
 	}
 
 	// UserをUIDに変換
-	if config.User != "" {
-		u, err := user.Lookup(config.User)
-		if err != nil {
-			return nil, err
-		}
-		uid, err := strconv.Atoi(u.Uid)
-		if err != nil {
-			return nil, err
-		}
-		config.Uid = uid
-	} else {
-		// ユーザーが設定されていなければ自分自身のUIDを取得
-		u, err := user.Current()
-		if err != nil {
-			return nil, err
-		}
-		uid, err := strconv.Atoi(u.Uid)
-		if err != nil {
-			return nil, err
-		}
-		config.Uid = uid
+	uid, err := getUid(config.User)
+	if err != nil {
+		return nil, err
 	}
+	config.Uid = uid
+
 	// GroupをGIDに変換
-	if config.Group != "" {
-		g, err := user.LookupGroup(config.Group)
-		if err != nil {
-			return nil, err
-		}
-		gid, err := strconv.Atoi(g.Gid)
-		if err != nil {
-			return nil, err
-		}
-		config.Gid = gid
-	} else {
-		// グループが設定されていなければ自分自身のGIDを取得
-		g, err := user.Current()
-		if err != nil {
-			return nil, err
-		}
-		gid, err := strconv.Atoi(g.Gid)
-		if err != nil {
-			return nil, err
-		}
-		config.Gid = gid
+	gid, err := getGid(config.Group)
+	if err != nil {
+		return nil, err
 	}
+	config.Gid = gid
 
 	// DKIMSignHeadersが設定されていなければエラー
 	if len(config.DKIMSignHeaders) == 0 {

@@ -5,6 +5,8 @@ MilterListen:
 #  Network: unix
 #  Address: /var/run/arcmilter.sock
 #  Mode: 0600
+#  Owner: postfix
+#  Group: postfix
 ControlSocketFile:
   Path: /var/run/arcmilterctl.sock
   Mode: 0600
