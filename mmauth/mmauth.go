@@ -60,6 +60,7 @@ func (a *AuthenticationHeaders) BodyHashCanonAndAlgo() []BodyCanonicalizationAnd
 		bca := BodyCanonicalizationAndAlgorithm{
 			Body:      body,
 			Algorithm: hashAlgo(SignatureAlgorithm(dkim.Algorithm)),
+			Limit:     dkim.Limit,
 		}
 		if !isCcanonicalizationBodyAndAlgorithm(bca, ret) {
 			ret = append(ret, bca)
