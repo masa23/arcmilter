@@ -85,8 +85,8 @@ DKIM署名およびARCの署名を行うmilterです。
       PrivateKeyFile: "/etc/arcmilter/keys/example.com.key"
       DKIM: true
       ARC: true
-  User: mail  // milterの実行ユーザ
-  Group: mail // milterの実行グループ
+  User: mail  // milterの子プロセス実行ユーザ    デフォルト: 実行ユーザ
+  Group: mail // milterの子プロセス実行グループ  デフォルト: 実行グループ
   ARCSignHeaders: // ARC署名するヘッダ
     - "DKIM-Signature"
     - "Date"
