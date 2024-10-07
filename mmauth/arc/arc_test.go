@@ -2,6 +2,13 @@ package arc
 
 import (
 	"crypto"
+	"crypto/ed25519"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/pem"
+	"log"
+	"os"
 	"testing"
 )
 
@@ -47,6 +54,79 @@ qdbVaBpMU4h9OpG1PtP5DIkbNL8vTKfjDHKobvDTY351JZctUTWp3VwovAWadCjn
 JQIDAQAB
 -----END PUBLIC KEY-----
 `
+
+var testED25519PrivateKey = `
+-----BEGIN PRIVATE KEY-----
+MC4CAQAwBQYDK2VwBCIEIL0sK/kwzKr3mdeGnWgN/rtX4UKYgK90oA8DNL9ebBME
+-----END PRIVATE KEY-----
+`
+
+var testED25519PublicKey = `
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAZdKSZdQcxdjw4oB9CfnK6RveEgcSFwr+5q2g5WfsDFU=
+-----END PUBLIC KEY-----
+`
+
+type testKey struct {
+	RSAPrivateKey          *rsa.PrivateKey
+	RSAPublicKeyBase64     string
+	ED25519PrivateKey      ed25519.PrivateKey
+	ED25519PublicKeyBase64 string
+}
+
+var testKeys = testKey{}
+
+func TestMain(m *testing.M) {
+	// RSA
+	block, _ := pem.Decode([]byte(testRSAPrivateKey))
+	if block == nil {
+		log.Fatal("failed to decode RSA private key")
+	}
+	priv, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		log.Fatalf("failed to parse RSA private key: %v", err)
+	}
+	testKeys.RSAPrivateKey = priv.(*rsa.PrivateKey)
+	block, _ = pem.Decode([]byte(testRSAPublicKey))
+	if block == nil {
+		log.Fatal("failed to decode RSA public key")
+	}
+	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		log.Fatalf("failed to parse RSA public key: %v", err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		log.Fatalf("failed to marshal RSA public key: %v", err)
+	}
+	testKeys.RSAPublicKeyBase64 = base64.StdEncoding.EncodeToString(der)
+
+	// ed25519
+	block, _ = pem.Decode([]byte(testED25519PrivateKey))
+	if block == nil {
+		log.Fatal("failed to decode ed25519 private key")
+	}
+	priv, err = x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		log.Fatalf("failed to parse ed25519 private key: %v", err)
+	}
+	testKeys.ED25519PrivateKey = priv.(ed25519.PrivateKey)
+	block, _ = pem.Decode([]byte(testED25519PublicKey))
+	if block == nil {
+		log.Fatal("failed to decode ed25519 public key")
+	}
+	pub, err = x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		log.Fatalf("failed to parse ed25519 public key: %v", err)
+	}
+	der, err = x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		log.Fatalf("failed to marshal ed25519 public key: %v", err)
+	}
+	testKeys.ED25519PublicKeyBase64 = base64.StdEncoding.EncodeToString(der)
+
+	os.Exit(m.Run())
+}
 
 func Test_hashAlgo(t *testing.T) {
 	testCases := []struct {

@@ -2,6 +2,7 @@ package arc
 
 import (
 	"crypto"
+	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/x509"
 	"errors"
@@ -169,12 +170,27 @@ func (as *ARCSeal) Verify(headers []string, domainKey *domainkey.DomainKey) *Ver
 	}
 	s = strings.TrimSuffix(s, "\r\n")
 
+	// 署名するヘッダをハッシュ化
+	hash := as.hashAlgo.New()
+	hash.Write([]byte(s))
+
+	// 署名をbase64デコード
+	signature, err := base64Decode(as.Signature)
+	if err != nil {
+		return &VerifyResult{
+			status:    VerifyStatusPermErr,
+			err:       fmt.Errorf("failed to decode arc-seal signature: %v", err),
+			msg:       "invalid signature",
+			domainKey: domainKey,
+		}
+	}
+
 	// 署名の検証
 	decoded, err := base64Decode(domainKey.PublicKey)
 	if err != nil {
 		return &VerifyResult{
 			status:    VerifyStatusPermErr,
-			err:       fmt.Errorf("failed to decode public key: %v", err),
+			err:       fmt.Errorf("failed to decode domainkey public key: %v", err),
 			msg:       "invalid public key",
 			domainKey: domainKey,
 		}
@@ -185,47 +201,40 @@ func (as *ARCSeal) Verify(headers []string, domainKey *domainkey.DomainKey) *Ver
 	if err != nil {
 		return &VerifyResult{
 			status:    VerifyStatusPermErr,
-			err:       fmt.Errorf("failed to parse public key: %v", err),
+			err:       fmt.Errorf("failed to parse domainkey public key: %v", err),
 			msg:       "invalid public key",
 			domainKey: domainKey,
 		}
 	}
 
-	// RSA公開鍵に変換
-	pubKey, ok := pub.(*rsa.PublicKey)
-	if !ok {
+	switch pub := pub.(type) {
+	case *rsa.PublicKey:
+		if err := rsa.VerifyPKCS1v15(pub, as.hashAlgo, hash.Sum(nil), signature); err != nil {
+			return &VerifyResult{
+				status:    VerifyStatusFail,
+				err:       fmt.Errorf("failed to verify arc-seal signature: %v", err),
+				msg:       "invalid signature",
+				domainKey: domainKey,
+			}
+		}
+	case ed25519.PublicKey:
+		if !ed25519.Verify(pub, hash.Sum(nil), signature) {
+			return &VerifyResult{
+				status:    VerifyStatusFail,
+				err:       fmt.Errorf("failed to verify arc-seal signature: %v", err),
+				msg:       "invalid signature",
+				domainKey: domainKey,
+			}
+		}
+	default:
 		return &VerifyResult{
 			status:    VerifyStatusPermErr,
-			err:       fmt.Errorf("failed to convert public key to rsa public key"),
+			err:       fmt.Errorf("failed to convert arc-seal public key to rsa or ed25519"),
 			msg:       "invalid public key",
 			domainKey: domainKey,
 		}
 	}
 
-	// 署名をbase64デコード
-	signature, err := base64Decode(as.Signature)
-	if err != nil {
-		return &VerifyResult{
-			status:    VerifyStatusPermErr,
-			err:       fmt.Errorf("failed to decode signature: %v", err),
-			msg:       "invalid signature",
-			domainKey: domainKey,
-		}
-	}
-
-	// 署名するヘッダをハッシュ化
-	hash := as.hashAlgo.New()
-	hash.Write([]byte(s))
-
-	// 署名の検証
-	if err := rsa.VerifyPKCS1v15(pubKey, as.hashAlgo, hash.Sum(nil), signature); err != nil {
-		return &VerifyResult{
-			status:    VerifyStatusFail,
-			err:       fmt.Errorf("failed to verify signature: %v", err),
-			msg:       "invalid signature",
-			domainKey: domainKey,
-		}
-	}
 	return &VerifyResult{
 		status:    VerifyStatusPass,
 		err:       nil,

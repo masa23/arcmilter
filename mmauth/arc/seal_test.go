@@ -1,10 +1,7 @@
 package arc
 
 import (
-	"crypto/rsa"
-	"crypto/x509"
-	"encoding/base64"
-	"encoding/pem"
+	"crypto"
 	"testing"
 
 	"github.com/masa23/arcmilter/mmauth/domainkey"
@@ -82,23 +79,16 @@ func TestARCSealParse(t *testing.T) {
 }
 
 func TestARCSealSign(t *testing.T) {
-	block, _ := pem.Decode([]byte(testRSAPrivateKey))
-	if block == nil {
-		t.Fatal("failed to decode pem")
-	}
-	priv, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if err != nil {
-		t.Fatalf("failed to parse pkcs8 private key: %s", err)
-	}
-	privateKey := priv.(*rsa.PrivateKey)
-
 	testCases := []struct {
 		name     string
+		keyType  string
 		input    *ARCSeal
 		headers  []string
 		expected string
 	}{
 		{
+			name:    "rsa key test",
+			keyType: "rsa",
 			input: &ARCSeal{
 				InstanceNumber:  1,
 				Algorithm:       SignatureAlgorithmRSA_SHA256,
@@ -129,6 +119,13 @@ func TestARCSealSign(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			var privateKey crypto.Signer
+			if tc.keyType == "rsa" {
+				privateKey = testKeys.RSAPrivateKey
+			} else if tc.keyType == "ed25519" {
+				privateKey = testKeys.ED25519PrivateKey
+			}
+
 			if err := tc.input.Sign(tc.headers, privateKey); err != nil {
 				t.Fatalf("failed to sign: %s", err)
 			}
@@ -215,25 +212,6 @@ func Test_arcHeaderSort(t *testing.T) {
 }
 
 func TestARCSealVerify(t *testing.T) {
-	block, _ := pem.Decode([]byte(testRSAPublicKey))
-
-	if block == nil {
-		t.Fatal("failed to decode pem")
-	}
-
-	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		t.Fatalf("failed to parse pkix public key: %s", err)
-	}
-	publicKey := pub.(*rsa.PublicKey)
-	//derに変換
-	der, err := x509.MarshalPKIXPublicKey(publicKey)
-	if err != nil {
-		t.Fatalf("failed to marshal pkix public key: %s", err)
-	}
-
-	publicKeyB64 := base64.StdEncoding.EncodeToString(der)
-
 	testCases := []struct {
 		name      string
 		header    string
@@ -241,7 +219,7 @@ func TestARCSealVerify(t *testing.T) {
 		domainkey domainkey.DomainKey
 	}{
 		{
-			name: "valid",
+			name: "valid rsa",
 			header: "ARC-Seal: i=1; a=rsa-sha256; t=1706971004; cv=none;\r\n" +
 				"        d=example.com; s=selector;\r\n" +
 				"        b=g+R0nyap1H1wsIqc3AvSesOyicLqq/p5bMP4yJUG/Kqmb8iN42MuYVdjD8xFNiPg\r\n" +
@@ -265,7 +243,7 @@ func TestARCSealVerify(t *testing.T) {
 			domainkey: domainkey.DomainKey{
 				HashAlgo:  []domainkey.HashAlgo{"rsa-sha256"},
 				KeyType:   "rsa",
-				PublicKey: publicKeyB64,
+				PublicKey: testKeys.RSAPublicKeyBase64,
 			},
 		},
 	}

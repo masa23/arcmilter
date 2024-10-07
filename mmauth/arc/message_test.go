@@ -1,6 +1,7 @@
 package arc
 
 import (
+	"crypto"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
@@ -128,16 +129,6 @@ func TestARCMessageSignatureParse(t *testing.T) {
 }
 
 func TestARCMessageSignatureSign(t *testing.T) {
-	block, _ := pem.Decode([]byte(testRSAPrivateKey))
-	if block == nil {
-		t.Fatal("failed to decode pem")
-	}
-	priv, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if err != nil {
-		t.Fatalf("failed to parse pkcs8 private key: %s", err)
-	}
-	privateKey := priv.(*rsa.PrivateKey)
-
 	testCases := []struct {
 		name     string
 		input    *ARCMessageSignature
@@ -145,7 +136,7 @@ func TestARCMessageSignatureSign(t *testing.T) {
 		expected string
 	}{
 		{
-			name: "simple/simple",
+			name: "simple/simple rsa-sha256",
 			input: &ARCMessageSignature{
 				InstanceNumber:   1,
 				Algorithm:        SignatureAlgorithmRSA_SHA256,
@@ -170,7 +161,7 @@ func TestARCMessageSignatureSign(t *testing.T) {
 				"CIROrH3gMTIolx1V+2oKVQ==",
 		},
 		{
-			name: "relaxed/relaxed",
+			name: "relaxed/relaxed rsa-sha256",
 			input: &ARCMessageSignature{
 				InstanceNumber:   1,
 				Algorithm:        SignatureAlgorithmRSA_SHA256,
@@ -194,10 +185,57 @@ func TestARCMessageSignatureSign(t *testing.T) {
 				"KL9IT/pKc6T9ibbgDlmh7sNjSEOIw7CS5dkp0k3r2zvR6l/fdChJh13fOv1LPwkmGeosXDWBmrdYr9Gx" +
 				"vrgEwmI6O74ZZR9jWIuyGg==",
 		},
+		{
+			name: "relaxed/relaxed ed25519-sha256",
+			input: &ARCMessageSignature{
+				InstanceNumber:   1,
+				Algorithm:        SignatureAlgorithmED25519_SHA256,
+				BodyHash:         "XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=",
+				Canonicalization: "relaxed/relaxed",
+				Domain:           "example.com",
+				Headers:          "Date:From:To:Subject",
+				Selector:         "selector",
+				Timestamp:        1728300596,
+			},
+			headers: []string{
+				"Date: Sat, 03 Feb 2024 23:36:43 +0900\r\n",
+				"From: hogefuga@example.com\r\n",
+				"To: aaa@example.org\r\n",
+				"Subject: test\r\n",
+			},
+			expected: "B8O8oPo2sTAfWlgKfcwdBAq6zLgv9+9zUfwGy9XsjvCA3UxBUpy6VuVzXcCyTrTjvvlarL7sMnQeZvXN92nPDw==",
+		},
+		{
+			name: "simple/simple ed25519-sha256",
+			input: &ARCMessageSignature{
+				InstanceNumber:   1,
+				Algorithm:        SignatureAlgorithmED25519_SHA256,
+				BodyHash:         "XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=",
+				Canonicalization: "simple/simple",
+				Domain:           "example.com",
+				Headers:          "Date:From:To:Subject",
+				Selector:         "selector",
+				Timestamp:        1728300596,
+			},
+			headers: []string{
+				"Date: Sat, 03 Feb 2024 23:36:43 +0900\r\n",
+				"From: hogefuga@example.com\r\n",
+				"To: aaa@example.org\r\n",
+				"Subject: test\r\n",
+			},
+			expected: "xcCQDNQSYZW0jnjeAFmshNjmMMe3x3pxVw2fIKjCRkjzJPEexL9SWI6C/RpeeDBf+/vMpqpDxgvnFbHHcHIrBA==",
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			var privateKey crypto.Signer
+			if tc.input.Algorithm == SignatureAlgorithmRSA_SHA256 || tc.input.Algorithm == SignatureAlgorithmRSA_SHA1 {
+				privateKey = testKeys.RSAPrivateKey
+			} else if tc.input.Algorithm == SignatureAlgorithmED25519_SHA256 {
+				privateKey = testKeys.ED25519PrivateKey
+			}
+
 			if err := tc.input.Sign(tc.headers, privateKey); err != nil {
 				t.Fatalf("failed to sign: %s", err)
 			}
