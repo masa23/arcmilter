@@ -74,6 +74,28 @@ type testKey struct {
 	ED25519PublicKeyBase64 string
 }
 
+func (k *testKey) getPrivateKey(keyType string) crypto.Signer {
+	switch keyType {
+	case "rsa":
+		return k.RSAPrivateKey
+	case "ed25519":
+		return k.ED25519PrivateKey
+	default:
+		return nil
+	}
+}
+
+func (k *testKey) getPublicKeyBase64(keyType string) string {
+	switch keyType {
+	case "rsa":
+		return k.RSAPublicKeyBase64
+	case "ed25519":
+		return k.ED25519PublicKeyBase64
+	default:
+		return ""
+	}
+}
+
 var testKeys = testKey{}
 
 func TestMain(m *testing.M) {

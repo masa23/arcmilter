@@ -229,7 +229,7 @@ func Load(path string) (*Config, error) {
 		switch key := priv.(type) {
 		case *rsa.PrivateKey:
 			value.PrivateKeySigner = key
-		case *ed25519.PrivateKey:
+		case ed25519.PrivateKey:
 			value.PrivateKeySigner = key
 		default:
 			return nil, fmt.Errorf("unknown key type: %T", key)

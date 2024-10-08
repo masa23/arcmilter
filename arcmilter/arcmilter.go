@@ -3,6 +3,8 @@ package arcmilter
 import (
 	"context"
 	"crypto"
+	"crypto/ed25519"
+	"crypto/rsa"
 	"fmt"
 	"log"
 	"net"
@@ -184,9 +186,20 @@ func DKIMSign(s *Session, m *milter.Modifier) {
 			Limit:     0,
 		})
 
+		var algo dkim.SignatureAlgorithm
+		switch domain.PrivateKeySigner.Public().(type) {
+		case *rsa.PublicKey:
+			algo = dkim.SignatureAlgorithmRSA_SHA256
+		case ed25519.PublicKey:
+			algo = dkim.SignatureAlgorithmED25519_SHA256
+		default:
+			log.Printf("unknown key type: %T", domain.PrivateKeySigner)
+			return
+		}
+
 		// DKIM署名
 		dkim := dkim.Signature{
-			Algorithm:        dkim.SignatureAlgorithmRSA_SHA256,
+			Algorithm:        algo,
 			Signature:        "",
 			BodyHash:         bodyHash,
 			Canonicalization: domain.HeaderCanonicalization + "/" + domain.BodyCanonicalization,
@@ -223,10 +236,21 @@ func ARCSign(s *Session, m *milter.Modifier) {
 			return
 		}
 
+		var algo arc.SignatureAlgorithm
+		switch domain.PrivateKeySigner.Public().(type) {
+		case *rsa.PublicKey:
+			algo = arc.SignatureAlgorithmRSA_SHA256
+		case ed25519.PublicKey:
+			algo = arc.SignatureAlgorithmED25519_SHA256
+		default:
+			log.Printf("unknown key type: %T", domain.PrivateKeySigner)
+			return
+		}
+
 		instanceNumber := ah.GetMaxInstance() + 1
 		signature := arc.ARCMessageSignature{
 			InstanceNumber:   instanceNumber,
-			Algorithm:        arc.SignatureAlgorithmRSA_SHA256,
+			Algorithm:        algo,
 			Domain:           s.rcptToDomain,
 			Selector:         "default",
 			Canonicalization: domain.HeaderCanonicalization + "/" + domain.BodyCanonicalization,
@@ -274,7 +298,7 @@ func ARCSign(s *Session, m *milter.Modifier) {
 		// ARC-Seal署名
 		seal := arc.ARCSeal{
 			InstanceNumber: instanceNumber,
-			Algorithm:      arc.SignatureAlgorithmRSA_SHA256,
+			Algorithm:      algo,
 			Domain:         s.rcptToDomain,
 			Selector:       domain.Selector,
 			ChainValidation: arc.ChainValidationResult(

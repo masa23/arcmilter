@@ -115,6 +115,27 @@ func TestARCSealSign(t *testing.T) {
 				"fExmsWYhytVvccgNIfYCgsji2Cee45epWJXJSD+RJLbhwbLgfMlFSUa4cdW0yNN24OB7rHV1T/tg+boG" +
 				"y2vkgXJHRmKvadyjGwTW8A==",
 		},
+		{
+			name:    "ed25519 key test",
+			keyType: "ed25519",
+			input: &ARCSeal{
+				InstanceNumber:  1,
+				Algorithm:       SignatureAlgorithmED25519_SHA256,
+				ChainValidation: ChainValidationResultNone,
+				Domain:          "example.com",
+				Selector:        "selector",
+				Timestamp:       1728300596,
+			},
+			headers: []string{
+				"ARC-Authentication-Results: i=1; example.com; dkim=pass; spf=pass\r\n",
+				"ARC-Message-Signature: i=1; a=ed25519-sha256; c=relaxed/relaxed; d=example.com; s=selector;\r\n" +
+					"        h=Date:From:To:Subject;\r\n" +
+					"        bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; t=1728300596;\r\n" +
+					"        b=B8O8oPo2sTAfWlgKfcwdBAq6zLgv9+9zUfwGy9XsjvCA3UxBUpy6VuVzXcCyTrTj\r\n" +
+					"         vvlarL7sMnQeZvXN92nPDw==\r\n",
+			},
+			expected: "Xt6qSS3XrProksIWSKvJhxr2RW+FG2IfkIArZlpeRyBeSMezkp9fENlxV/7owRU7mDFM3ExsIOzOXrQjuaJOCw==",
+		},
 	}
 
 	for _, tc := range testCases {
@@ -243,7 +264,27 @@ func TestARCSealVerify(t *testing.T) {
 			domainkey: domainkey.DomainKey{
 				HashAlgo:  []domainkey.HashAlgo{"rsa-sha256"},
 				KeyType:   "rsa",
-				PublicKey: testKeys.RSAPublicKeyBase64,
+				PublicKey: testKeys.getPublicKeyBase64("rsa"),
+			},
+		},
+		{
+			name: "valid ed25519",
+			header: "ARC-Seal: i=1; a=ed25519-sha256; t=1728300596; cv=none;\r\n" +
+				"        d=example.com; s=selector;\r\n" +
+				"        b=Xt6qSS3XrProksIWSKvJhxr2RW+FG2IfkIArZlpeRyBeSMezkp9fENlxV/7owRU7\r\n" +
+				"         mDFM3ExsIOzOXrQjuaJOCw==\r\n",
+			headers: []string{
+				"ARC-Authentication-Results: i=1; example.com; dkim=pass; spf=pass\r\n",
+				"ARC-Message-Signature: i=1; a=ed25519-sha256; c=relaxed/relaxed; d=example.com; s=selector;\r\n" +
+					"        h=Date:From:To:Subject;\r\n" +
+					"        bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; t=1728300596;\r\n" +
+					"        b=B8O8oPo2sTAfWlgKfcwdBAq6zLgv9+9zUfwGy9XsjvCA3UxBUpy6VuVzXcCyTrTj\r\n" +
+					"         vvlarL7sMnQeZvXN92nPDw==\r\n",
+			},
+			domainkey: domainkey.DomainKey{
+				HashAlgo:  []domainkey.HashAlgo{"ed25519-sha256"},
+				KeyType:   "ed25519",
+				PublicKey: testKeys.getPublicKeyBase64("ed25519"),
 			},
 		},
 	}
