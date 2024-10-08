@@ -151,6 +151,18 @@ func (ams *ARCMessageSignature) Sign(headers []string, key crypto.Signer) error 
 		return err
 	}
 
+	// 署名アルゴリズムが指定されていない場合は鍵のタイプから自動設定
+	if ams.Algorithm == "" {
+		switch key.Public().(type) {
+		case *rsa.PublicKey:
+			ams.Algorithm = SignatureAlgorithmRSA_SHA256
+		case ed25519.PublicKey:
+			ams.Algorithm = SignatureAlgorithmED25519_SHA256
+		default:
+			return fmt.Errorf("unknown key type: %T", key.Public())
+		}
+	}
+
 	ams.Headers = strings.Join(h, ":")
 	// timestampを設定
 	if ams.Timestamp == 0 {
@@ -230,7 +242,7 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 	if err != nil {
 		return &VerifyResult{
 			status:    VerifyStatusPermErr,
-			err:       fmt.Errorf("failed to decode signature: %v", err),
+			err:       fmt.Errorf("failed to decode arc-message-signature signature: %v", err),
 			msg:       "invalid signature",
 			domainKey: domainKey,
 		}
@@ -245,7 +257,7 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 	if err != nil {
 		return &VerifyResult{
 			status:    VerifyStatusPermErr,
-			err:       fmt.Errorf("failed to decode public key: %v", err),
+			err:       fmt.Errorf("failed to decode domainkey public key: %v", err),
 			msg:       "invalid public key",
 			domainKey: domainKey,
 		}
@@ -256,7 +268,7 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 	if err != nil {
 		return &VerifyResult{
 			status:    VerifyStatusPermErr,
-			err:       fmt.Errorf("failed to parse public key: %v", err),
+			err:       fmt.Errorf("failed to parse domainkey public key: %v", err),
 			msg:       "invalid public key",
 			domainKey: domainKey,
 		}
@@ -268,7 +280,7 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 		if err := rsa.VerifyPKCS1v15(pub, ams.canonnAndAlog.HashAlgo, hash.Sum(nil), signature); err != nil {
 			return &VerifyResult{
 				status:    VerifyStatusFail,
-				err:       fmt.Errorf("failed to verify signature: %v", err),
+				err:       fmt.Errorf("failed to verify arc-message-signature signature: %v", err),
 				msg:       "invalid signature",
 				domainKey: domainKey,
 			}
@@ -278,7 +290,7 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 		if !ed25519.Verify(pub, hash.Sum(nil), signature) {
 			return &VerifyResult{
 				status:    VerifyStatusFail,
-				err:       fmt.Errorf("invalid public key type: %T", pub),
+				err:       fmt.Errorf("fail	to verify arc-message-signature signature: %v", err),
 				msg:       "invalid signature",
 				domainKey: domainKey,
 			}
@@ -286,7 +298,7 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 	default:
 		return &VerifyResult{
 			status:    VerifyStatusPermErr,
-			err:       fmt.Errorf("failed to convert public key to rsa public key"),
+			err:       fmt.Errorf("failed to convert arc-message-signature public key to rsa or ed25519"),
 			msg:       "invalid public key",
 			domainKey: domainKey,
 		}
