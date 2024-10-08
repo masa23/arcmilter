@@ -119,6 +119,19 @@ func (as *ARCSeal) Sign(headers []string, key crypto.Signer) error {
 	if as.Timestamp == 0 {
 		as.Timestamp = time.Now().Unix()
 	}
+
+	// 署名アルゴリズムが指定されていない場合は鍵のタイプから自動設定
+	if as.Algorithm == "" {
+		switch key.Public().(type) {
+		case *rsa.PublicKey:
+			as.Algorithm = SignatureAlgorithmRSA_SHA256
+		case ed25519.PublicKey:
+			as.Algorithm = SignatureAlgorithmED25519_SHA256
+		default:
+			return fmt.Errorf("unknown key type: %T", key.Public())
+		}
+	}
+
 	headers = append(headers, "ARC-Seal: "+as.String())
 	signature, err := header.Signer(headers, key, canonical.Relaxed)
 	if err != nil {

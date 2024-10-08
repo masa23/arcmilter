@@ -151,6 +151,18 @@ func (ams *ARCMessageSignature) Sign(headers []string, key crypto.Signer) error 
 		return err
 	}
 
+	// 署名アルゴリズムが指定されていない場合は鍵のタイプから自動設定
+	if ams.Algorithm == "" {
+		switch key.Public().(type) {
+		case *rsa.PublicKey:
+			ams.Algorithm = SignatureAlgorithmRSA_SHA256
+		case ed25519.PublicKey:
+			ams.Algorithm = SignatureAlgorithmED25519_SHA256
+		default:
+			return fmt.Errorf("unknown key type: %T", key.Public())
+		}
+	}
+
 	ams.Headers = strings.Join(h, ":")
 	// timestampを設定
 	if ams.Timestamp == 0 {
