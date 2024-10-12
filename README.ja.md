@@ -1,5 +1,8 @@
 # arcmilter [![Go Report Card](https://goreportcard.com/badge/github.com/masa23/arcmilter)](https://goreportcard.com/report/github.com/masa23/arcmilter) [![GoDoc](https://godoc.org/github.com/masa23/arcmilter?status.svg)](https://godoc.org/github.com/masa23/arcmilter) [![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](https://raw.githubusercontent.com/masa23/arcmilter/main/LICENSE)
 
+* [日本語](README.ja.md)
+* [English](README.md)
+
 DKIM署名およびARCの署名を行うmilterです。  
 [RFC6376](https://datatracker.ietf.org/doc/html/rfc6376)、[RFC8617](https://datatracker.ietf.org/doc/html/rfc8617)に準拠させたつもりですが、  
 個人での利用を想定しているため、実際の運用には十分なテストが必要です。  

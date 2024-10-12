@@ -1,5 +1,8 @@
 # arcmilter [![Go Report Card](https://goreportcard.com/badge/github.com/masa23/arcmilter)](https://goreportcard.com/report/github.com/masa23/arcmilter) [![GoDoc](https://godoc.org/github.com/masa23/arcmilter?status.svg)](https://godoc.org/github.com/masa23/arcmilter) [![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](https://raw.githubusercontent.com/masa23/arcmilter/main/LICENSE)
 
+* [日本語](README.ja.md)
+* [English](README.md)
+
 A milter that performs DKIM and ARC signatures.  
 I intended to comply with [RFC6376](https://datatracker.ietf.org/doc/html/rfc6376) and [RFC8617](https://datatracker.ietf.org/doc/html/rfc8617), but since it is designed for personal use, thorough testing is needed for actual operation.  
 I welcome feedback and pull requests.
