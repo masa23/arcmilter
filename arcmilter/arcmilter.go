@@ -252,7 +252,7 @@ func ARCSign(s *Session, m *milter.Modifier) {
 			InstanceNumber:   instanceNumber,
 			Algorithm:        algo,
 			Domain:           s.rcptToDomain,
-			Selector:         "default",
+			Selector:         domain.Selector,
 			Canonicalization: domain.HeaderCanonicalization + "/" + domain.BodyCanonicalization,
 			BodyHash: s.mmauth.GetBodyHash(
 				mmauth.BodyCanonicalizationAndAlgorithm{
@@ -300,7 +300,7 @@ func ARCSign(s *Session, m *milter.Modifier) {
 			InstanceNumber: instanceNumber,
 			Algorithm:      algo,
 			Domain:         s.rcptToDomain,
-			Selector:       domain.Selector,
+			Selector:       domain.ARCSelector,
 			ChainValidation: arc.ChainValidationResult(
 				s.mmauth.AuthenticationHeaders.ARCSignatures.GetVerifyResult(),
 			),
