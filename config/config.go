@@ -59,6 +59,7 @@ type Domain struct {
 	PrivateKeyFile         string `yaml:"PrivateKeyFile"`
 	PrivateKeySigner       crypto.Signer
 	Selector               string `yaml:"Selector"`
+	ARCSelector            string `yaml:"ARCSelector"`
 	Domain                 string
 	DKIM                   bool `yaml:"DKIM"`
 	ARC                    bool `yaml:"ARC"`
@@ -264,6 +265,14 @@ func Load(path string) (*Config, error) {
 			value.HashAlgo = crypto.SHA256
 		default:
 			return nil, fmt.Errorf("invalid HashAlgo: %s", value.HashAlgo)
+		}
+
+		// if Selector is empty, use "default"
+		if value.Selector == "" {
+			value.Selector = "default"
+		}
+		if value.ARCSelector == "" {
+			value.ARCSelector = value.Selector
 		}
 
 		value.Domain = domain

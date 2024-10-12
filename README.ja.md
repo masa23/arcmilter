@@ -82,6 +82,7 @@ DKIM署名およびARCの署名を行うmilterです。
       HeaderBodyCanonicalization: "relaxed"
       BodyCanonicalization: "relaxed"
       Selector: "default"
+      ARCSelector: "default"
       PrivateKeyFile: "/etc/arcmilter/keys/example.com.key"
       DKIM: true
       ARC: true

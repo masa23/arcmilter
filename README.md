@@ -81,6 +81,7 @@ I welcome feedback and pull requests.
       HeaderBodyCanonicalization: "relaxed"
       BodyCanonicalization: "relaxed"
       Selector: "default"
+      ARCSelector: "default"
       PrivateKeyFile: "/etc/arcmilter/keys/example.com.key"
       DKIM: true
       ARC: true
