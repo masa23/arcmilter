@@ -3,8 +3,10 @@ MilterListen:
   Address: 0.0.0.0:10029
 #MilterListen:
 #  Network: unix
-#  Address: /var/run/dkimd.sock
-#  Mode: 0660
+#  Address: /var/run/arcmilter.sock
+#  Mode: 0600
+#  Owner: postfix
+#  Group: postfix
 ControlSocketFile:
   Path: /var/run/arcmilterctl.sock
   Mode: 0600
@@ -25,9 +27,13 @@ Domains:
     HeaderCanonicalization: "relaxed"
     BodyCanonicalization: "relaxed"
     Selector: "default"
+    ARCSelector: "default"
     PrivateKeyFile: "/etc/arcmilter/keys/example.com.key"
     DKIM: true
     ARC: true
+MyNetworks:
+  - 127.0.0.0/8
+  - ::1/128
 User: mail
 Group: mail
 ARCSignHeaders:

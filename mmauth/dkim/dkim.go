@@ -241,6 +241,19 @@ func (d *Signature) Sign(headers []string, key crypto.Signer) error {
 	if d.Timestamp == 0 {
 		d.Timestamp = time.Now().Unix()
 	}
+
+	// 署名アルゴリズムが指定されていない場合は鍵のタイプから自動設定
+	if d.Algorithm == "" {
+		switch key.Public().(type) {
+		case *rsa.PublicKey:
+			d.Algorithm = SignatureAlgorithmRSA_SHA256
+		case ed25519.PublicKey:
+			d.Algorithm = SignatureAlgorithmED25519_SHA256
+		default:
+			return fmt.Errorf("unknown key type: %T", key.Public())
+		}
+	}
+
 	headers = append(headers, "DKIM-Signature: "+d.String())
 	signature, err := header.Signer(headers, key, canHeader)
 	if err != nil {

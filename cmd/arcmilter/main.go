@@ -33,32 +33,33 @@ type child struct {
 }
 
 // PIDファイルを確認して、存在していたら終了する
-func checkPidFile() {
+func checkPidFile(path string) error {
 	// pidを取得
 	pid := os.Getpid()
 
 	// PIDファイルを開く
-	buf, err := os.ReadFile(conf.PidFile.Path)
+	buf, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		// ファイルが存在しなければ作成
-		if err := os.WriteFile(conf.PidFile.Path, []byte(strconv.Itoa(pid)), 0644); err != nil {
-			log.Fatalf("failed to create pid file: %v", err)
+		if err := os.WriteFile(path, []byte(strconv.Itoa(pid)), 0644); err != nil {
+			return fmt.Errorf("failed to create pid file: %v", err)
 		}
 	} else {
 		oldPid, err := strconv.Atoi(string(buf))
 		if err != nil {
-			log.Fatalf("failed to parse pid file: %v", err)
+			return fmt.Errorf("failed to parse pid file: %v", err)
 		}
 		// 既に起動しているか確認
 		if err := syscall.Kill(oldPid, 0); err == nil {
-			log.Fatalf("pid file %s already exists", conf.PidFile.Path)
+			return fmt.Errorf("pid file %s already exists", path)
 		} else {
 			// 起動していなければ上書き
-			if err := os.WriteFile(conf.PidFile.Path, []byte(strconv.Itoa(pid)), 0644); err != nil {
+			if err := os.WriteFile(path, []byte(strconv.Itoa(pid)), 0644); err != nil {
 				log.Fatalf("failed to write pid file: %v", err)
 			}
 		}
 	}
+	return nil
 }
 
 func openLogFile() error {
@@ -294,7 +295,9 @@ func main() {
 	}
 
 	// PIDファイルを確認
-	checkPidFile()
+	if err := checkPidFile(conf.PidFile.Path); err != nil {
+		log.Fatalf("Failed to check pid file: %v", err)
+	}
 
 	// ログファイルをセットする
 	if err := openLogFile(); err != nil {
@@ -314,6 +317,10 @@ func main() {
 		// socketのパーミッションを変更
 		if err := os.Chmod(conf.MilterListen.Address, fs.FileMode(conf.MilterListen.Mode)); err != nil {
 			log.Fatalf("Failed to change socket permission: %v", err)
+		}
+		// socketのオーナーを変更
+		if err := os.Chown(conf.MilterListen.Address, conf.MilterListen.Uid, conf.MilterListen.Gid); err != nil {
+			log.Fatalf("Failed to change socket owner: %v", err)
 		}
 		msockfd, err = msocket.(*net.UnixListener).File()
 		if err != nil {

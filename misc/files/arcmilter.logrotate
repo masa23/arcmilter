@@ -1,0 +1,14 @@
+/var/log/arcmilter.log {
+    daily
+    missingok
+    rotate 14
+    compress
+    delaycompress
+    notifempty
+    sharedscripts
+    postrotate
+        if [ -f /usr/run/arcmilter.pid ]; then
+            kill -s HUP `head -1 /usr/run/arcmilter.pid`
+        fi
+    endscript
+}

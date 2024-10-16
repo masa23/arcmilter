@@ -1,4 +1,7 @@
-# arcmilter
+# arcmilter [![Go Report Card](https://goreportcard.com/badge/github.com/masa23/arcmilter)](https://goreportcard.com/report/github.com/masa23/arcmilter) [![GoDoc](https://godoc.org/github.com/masa23/arcmilter?status.svg)](https://godoc.org/github.com/masa23/arcmilter) [![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](https://raw.githubusercontent.com/masa23/arcmilter/main/LICENSE)
+
+* [日本語](README.ja.md)
+* [English](README.md)
 
 DKIM署名およびARCの署名を行うmilterです。  
 [RFC6376](https://datatracker.ietf.org/doc/html/rfc6376)、[RFC8617](https://datatracker.ietf.org/doc/html/rfc8617)に準拠させたつもりですが、  
@@ -56,7 +59,9 @@ DKIM署名およびARCの署名を行うmilterです。
   #MilterListen:
   #  Network: unix
   #  Address: /var/run/arcmilter.sock
-  #  Mode: 0660
+  #  Mode: 0600
+  #  Owner: postfix // デフォルト: 実行ユーザ
+  #  Group: postfix // デフォルト: 実行グループ
   ControlSocketFile:
     Path: /var/run/arcmilterctl.sock
     Mode: 0600
@@ -65,6 +70,9 @@ DKIM署名およびARCの署名を行うmilterです。
   LogFile:
     Path: /var/log/arcmilter.log
     Mode: 0600
+  MyNetworks:
+  - 127.0.0.0/8
+  - ::1/128
   Domains:
     "example.jp": // DKIM署名するFromのドメイン、ARC署名するRcpt-Toのドメイン
       HeaderCanonicalization: "relaxed" // ヘッダの正規化方法
@@ -77,11 +85,12 @@ DKIM署名およびARCの署名を行うmilterです。
       HeaderBodyCanonicalization: "relaxed"
       BodyCanonicalization: "relaxed"
       Selector: "default"
+      ARCSelector: "default"
       PrivateKeyFile: "/etc/arcmilter/keys/example.com.key"
       DKIM: true
       ARC: true
-  User: mail  // milterの実行ユーザ
-  Group: mail // milterの実行グループ
+  User: mail  // milterの子プロセス実行ユーザ    デフォルト: 実行ユーザ
+  Group: mail // milterの子プロセス実行グループ  デフォルト: 実行グループ
   ARCSignHeaders: // ARC署名するヘッダ
     - "DKIM-Signature"
     - "Date"
@@ -148,3 +157,7 @@ smtpd_milters = unix:/var/run/arcmilter.sock
   * [k0kubun/pp](https://github.com/k0kubun/pp)
   * [wttw/spf](https://github.com/wttw/spf)
   * [yaml.v3](https://gopkg.in/yaml.v3)
+
+以下のライブラリは制作に当たって参考にさせていただきました。
+
+  * [emersion/go-msgauth](https://github.com/emersion/go-msgauth/)

@@ -1,0 +1,37 @@
+MilterListen:
+  Network: unix
+  Address: ./t/tmp/arcmilter.sock
+  Mode: 0600
+ControlSocketFile:
+  Path: ./t/tmp/arcmilterctl.sock
+  Mode: 0600
+PIDFile:
+  Path: ./t/tmp/arcmilter.pid
+LogFile:
+  Path: ./t/tmp/arcmilter.log
+  Mode: 0600
+MyNetworks:
+  - 127.0.0.0/8
+  - ::1/128
+Domains:
+  "example.jp":
+    HeaderCanonicalization: "relaxed"
+    BodyCanonicalization: "relaxed"
+    Selector: "default"
+    PrivateKeyFile: "./t/key"
+    DKIM: true
+    ARC: true
+ARCSignHeaders:
+  - "DKIM-Signature"
+  - "Date"
+  - "From"
+  - "To"
+  - "Message-Id"
+DKIMSignHeaders:
+  - "Date"
+  - "From"
+  - "To"
+  - "Reply-To"
+  - "Message-ID"
+  - "Subject"
+Debug: false

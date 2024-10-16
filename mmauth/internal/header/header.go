@@ -2,7 +2,9 @@ package header
 
 import (
 	"crypto"
+	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
@@ -84,8 +86,19 @@ func Signer(headers []string, key crypto.Signer, canon canonical.Canonicalizatio
 	// 署名するヘッダをハッシュ化
 	hashed := sha256.Sum256([]byte(s))
 
+	var hash crypto.Hash
+
+	switch key.Public().(type) {
+	case *rsa.PublicKey:
+		hash = crypto.SHA256
+	case ed25519.PublicKey:
+		hash = crypto.Hash(0)
+	default:
+		return "", errors.New("unsupported private key type")
+	}
+
 	// 秘密鍵を用いてハッシュを署名（ハッシュアルゴリズムの指定を修正）
-	signature, err := key.Sign(rand.Reader, hashed[:], crypto.SHA256)
+	signature, err := key.Sign(rand.Reader, hashed[:], hash)
 	if err != nil {
 		return "", err
 	}

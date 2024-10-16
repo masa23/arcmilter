@@ -1,4 +1,7 @@
-# arcmilter
+# arcmilter [![Go Report Card](https://goreportcard.com/badge/github.com/masa23/arcmilter)](https://goreportcard.com/report/github.com/masa23/arcmilter) [![GoDoc](https://godoc.org/github.com/masa23/arcmilter?status.svg)](https://godoc.org/github.com/masa23/arcmilter) [![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](https://raw.githubusercontent.com/masa23/arcmilter/main/LICENSE)
+
+* [日本語](README.ja.md)
+* [English](README.md)
 
 A milter that performs DKIM and ARC signatures.  
 I intended to comply with [RFC6376](https://datatracker.ietf.org/doc/html/rfc6376) and [RFC8617](https://datatracker.ietf.org/doc/html/rfc8617), but since it is designed for personal use, thorough testing is needed for actual operation.  
@@ -55,7 +58,9 @@ I welcome feedback and pull requests.
   #MilterListen:
   #  Network: unix
   #  Address: /var/run/arcmilter.sock
-  #  Mode: 0660
+  #  Mode: 0600
+  #  Owner: postfix // Default: Execution user
+  #  Group: postfix // Default: Execution group
   ControlSocketFile:
     Path: /var/run/arcmilterctl.sock
     Mode: 0600
@@ -64,6 +69,9 @@ I welcome feedback and pull requests.
   LogFile:
     Path: /var/log/arcmilter.log
     Mode: 0600
+  MyNetworks:
+  - 127.0.0.0/8
+  - ::1/128
   Domains:
     "example.jp": // Domain for DKIM signing in From field, and ARC signing in Rcpt-To field
       HeaderCanonicalization: "relaxed" // Header normalization method
@@ -76,6 +84,7 @@ I welcome feedback and pull requests.
       HeaderBodyCanonicalization: "relaxed"
       BodyCanonicalization: "relaxed"
       Selector: "default"
+      ARCSelector: "default"
       PrivateKeyFile: "/etc/arcmilter/keys/example.com.key"
       DKIM: true
       ARC: true
@@ -147,3 +156,7 @@ The following external libraries are used.
   * [k0kubun/pp](https://github.com/k0kubun/pp)
   * [wttw/spf](https://github.com/wttw/spf)
   * [yaml.v3](https://gopkg.in/yaml.v3)
+
+The following library was used as a reference during production.
+
+  * [emersion/go-msgauth](https://github.com/emersion/go-msgauth/)

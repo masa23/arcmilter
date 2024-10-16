@@ -1,9 +1,13 @@
 package header
 
 import (
+	"crypto"
+	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"log"
+	"os"
 	"reflect"
 	"testing"
 
@@ -41,26 +45,67 @@ Xh472j/rkZiJrHbqPzzl3oyUCwCtTVrjBp/fuHa9HMbJQHAhUIEtzAKT0mg5mylY
 -----END PRIVATE KEY-----
 `
 
-func TestSigner(t *testing.T) {
+var testED25519PrivateKey = `
+-----BEGIN PRIVATE KEY-----
+MC4CAQAwBQYDK2VwBCIEIL0sK/kwzKr3mdeGnWgN/rtX4UKYgK90oA8DNL9ebBME
+-----END PRIVATE KEY-----
+`
+
+type testKey struct {
+	RSAPrivateKey     *rsa.PrivateKey
+	ED25519PrivateKey ed25519.PrivateKey
+}
+
+func (k *testKey) getPrivateKey(keyType string) crypto.Signer {
+	switch keyType {
+	case "rsa":
+		return k.RSAPrivateKey
+	case "ed25519":
+		return k.ED25519PrivateKey
+	default:
+		return nil
+	}
+}
+
+var testKeys = testKey{}
+
+func TestMain(m *testing.M) {
+	// RSA
 	block, _ := pem.Decode([]byte(testRSAPrivateKey))
 	if block == nil {
-		t.Fatal("failed to decode pem")
+		log.Fatalf("failed to decode RSA private key")
 	}
 	priv, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
-		t.Fatalf("failed to parse pkcs8 private key: %s", err)
+		log.Fatalf("failed to parse RSA private key: %s", err)
 	}
-	privateKey := priv.(*rsa.PrivateKey)
+	testKeys.RSAPrivateKey = priv.(*rsa.PrivateKey)
+	// ED25519
+	block, _ = pem.Decode([]byte(testED25519PrivateKey))
+	if block == nil {
+		log.Fatalf("failed to decode ED25519 private key")
+	}
+	priv, err = x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		log.Fatalf("failed to parse ED25519 private key: %s", err)
+	}
+	testKeys.ED25519PrivateKey = priv.(ed25519.PrivateKey)
 
+	os.Exit(m.Run())
+}
+
+func TestSigner(t *testing.T) {
 	cases := []struct {
 		name    string
+		keyType string
 		headers []string
 		canon   canonical.Canonicalization
 		want    string
 		wantErr error
 	}{
 		{
-			name: "relaxed",
+			name:    "relaxed rsa",
+			keyType: "rsa",
 			headers: []string{
 				"Date: Sat, 03 Feb 2024 23:36:43 +0900\r\n",
 				"From: hogefuga@example.com\r\n",
@@ -75,7 +120,8 @@ func TestSigner(t *testing.T) {
 			wantErr: nil,
 		},
 		{
-			name: "simple",
+			name:    "simple rsa",
+			keyType: "rsa",
 			headers: []string{
 				"Date: Sat, 03 Feb 2024 23:36:43 +0900\r\n",
 				"From: hogefuga@example.com\r\n",
@@ -89,11 +135,39 @@ func TestSigner(t *testing.T) {
 				"zoeD+KY6O5vSDhreH7U95AU3o7qh9vbVjwQ8f8AUW9m7YcN+fcPx4y8O3l7I+Aoc8X1DHAqQCtKgA9//sP6GSdU7OZz8sI7DwhuWIy46um1Pd+hAcCQfp2OnBiQslIXu9NuK3C+YonynNBZ24wAsVujoPAy+x8IerPzt5IJgTfyF35f4+KqjLBCvdj+Q==",
 			wantErr: nil,
 		},
+		{
+			name:    "relaxed ed25519",
+			keyType: "ed25519",
+			headers: []string{
+				"Date: Sat, 03 Feb 2024 23:36:43 +0900\r\n",
+				"From: hogefuga@example.com\r\n",
+				"To: aaa@example.org\r\n",
+				"Subject: test\r\n",
+				"DKIM-Signature: v=1; a=ed25519-sha256; c=relaxed/relaxed; d=example.com;\n\ts=selector; t=1728300596;\n\tbh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=;\n\th=Date:From:To:Subject;\n\tb=",
+			},
+			canon:   canonical.Relaxed,
+			want:    "sbFgoCyENUFzV79FuAw2UiG14GTYLOvDeQS9Wv7NY4jfIPYdQRm9Kn/BiyW2W9Ikrwf6AUZkf2UKLJmAUoP4DQ==",
+			wantErr: nil,
+		},
+		{
+			name:    "simple ed25519",
+			keyType: "ed25519",
+			headers: []string{
+				"Date: Sat, 03 Feb 2024 23:36:43 +0900\r\n",
+				"From: hogefuga@example.com\r\n",
+				"To: aaa@example.org\r\n",
+				"Subject: test\r\n",
+				"DKIM-Signature: v=1; a=ed25519-sha256; c=simple/simple; d=example.com;\n\ts=selector; t=1728300288;\n\tbh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=;\n\th=Date:From:To:Subject;\n\tb=",
+			},
+			canon:   canonical.Relaxed,
+			want:    "bvm5NplaBo4igE699kkI3OTefoo334DeLirTSNcjh6Grxw7sv9+xh+J08eATT5IoH/+c7sastMm19aM4Tt/iAw==",
+			wantErr: nil,
+		},
 	}
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := Signer(tt.headers, privateKey, tt.canon)
+			got, err := Signer(tt.headers, testKeys.getPrivateKey(tt.keyType), tt.canon)
 			if err != tt.wantErr {
 				t.Errorf("headerSigner() error = %v, wantErr %v", err, tt.wantErr)
 				return

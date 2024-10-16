@@ -58,6 +58,9 @@ nfpms:
       - dst: /lib/systemd/system/arcmilter.service
         src: misc/files/arcmilter.service
         type: config
+      - dst: /etc/logrotate.d/arcmilter
+        src: misc/files/arcmilter.logrotate
+        type: config
       - dst: /etc/arcmilter/arcmilter.yaml
         src: cmd/arcmilter/arcmilter.yaml.sample
         type: config
