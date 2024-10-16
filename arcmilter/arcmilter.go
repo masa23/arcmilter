@@ -274,7 +274,7 @@ func ARCSign(s *Session, m *milter.Modifier) {
 		if s.remoteAddr != nil {
 			res, _ := spf.Check(context.Background(), s.remoteAddr, s.mailFrom, s.helo)
 			results = append(results,
-				fmt.Sprintf("spf=%s smtp.mailfrom=%s smtp.hello=%s", res.String(), s.mailFrom, s.helo))
+				fmt.Sprintf("spf=%s smtp.mailfrom=%s smtp.helo=%s", res.String(), s.mailFrom, s.helo))
 		}
 
 		// DKIM

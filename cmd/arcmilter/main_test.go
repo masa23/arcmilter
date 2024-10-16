@@ -258,7 +258,7 @@ func testMilter(t *testing.T) {
 				InstanceNumber: 1,
 				AuthServId:     "example.jp",
 				Results: []string{
-					"spf=fail smtp.mailfrom=<test@example.com> smtp.hello=example.com",
+					"spf=fail smtp.mailfrom=<test@example.com> smtp.helo=example.com",
 					"arc=none",
 				},
 			},
