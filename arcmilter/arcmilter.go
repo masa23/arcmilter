@@ -352,3 +352,24 @@ func (s *Session) EndOfMessage(m *milter.Modifier) (*milter.Response, error) {
 
 	return milter.RespContinue, nil
 }
+
+func (s *Session) Abort(_ *milter.Modifier) error {
+	debugLog("Abort")
+
+	if s.mmauth != nil {
+		if err := s.mmauth.Close(); err != nil {
+			log.Printf("s.mmauth.Close: %v", err)
+		}
+	}
+	return nil
+}
+
+func (s *Session) Cleanup() {
+	debugLog("Cleanup")
+
+	if s.mmauth != nil {
+		if err := s.mmauth.Close(); err != nil {
+			log.Printf("s.mmauth.Close: %v", err)
+		}
+	}
+}
