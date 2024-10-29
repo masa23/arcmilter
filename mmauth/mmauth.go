@@ -111,7 +111,7 @@ func (m *MMAuth) AddBodyHash(bca BodyCanonicalizationAndAlgorithm) {
 func (m *MMAuth) parsedMail() {
 	var err error
 	defer func() {
-		m.done <- struct{}{}
+		close(m.done)
 	}()
 
 	// ヘッダの取得
