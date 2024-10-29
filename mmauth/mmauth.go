@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/masa23/arcmilter/mmauth/internal/bodyhash"
 	"github.com/masa23/arcmilter/mmauth/internal/canonical"
@@ -89,10 +90,13 @@ type MMAuth struct {
 	AuthenticationHeaders *AuthenticationHeaders
 	Headers               headers
 	pw                    *io.PipeWriter
+	pr                    *io.PipeReader
+	pclose                bool
 	done                  chan struct{}
 	err                   error
 	bodyHashList          []BodyCanonicalizationAndAlgorithm
 	bodyHashed            []BodyHash
+	mutex                 sync.Mutex
 }
 
 // 生成すべきBodyHashの種類を追加する
@@ -104,14 +108,14 @@ func (m *MMAuth) AddBodyHash(bca BodyCanonicalizationAndAlgorithm) {
 }
 
 // メールの分解とハッシュの計算を行う
-func (m *MMAuth) parsedMail(pr *io.PipeReader) {
+func (m *MMAuth) parsedMail() {
 	var err error
 	defer func() {
-		m.done <- struct{}{}
+		close(m.done)
 	}()
 
 	// ヘッダの取得
-	buf := bufio.NewReader(pr)
+	buf := bufio.NewReader(m.pr)
 	m.Headers, err = readHeader(buf)
 	if err != nil {
 		m.err = err
@@ -225,11 +229,12 @@ func NewMMAuth() *MMAuth {
 	done := make(chan struct{})
 	m := &MMAuth{
 		pw:   pw,
+		pr:   pr,
 		done: done,
 	}
 
 	// メールデータを読み込んで解析する
-	go m.parsedMail(pr)
+	go m.parsedMail()
 
 	return m
 }
@@ -241,9 +246,18 @@ func (m *MMAuth) Write(p []byte) (n int, err error) {
 
 // メールメッセージ処理の終了
 func (m *MMAuth) Close() error {
-	err := m.pw.Close()
-	<-m.done
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
 
+	// 既に終了している場合は何もしない
+	if m.pclose {
+		return nil
+	}
+
+	// メールデータの書き込みを終了する
+	err := m.pw.Close()
+	m.pclose = true
+	<-m.done
 	return err
 }
 
