@@ -37,18 +37,17 @@ type AuthenticationHeaders struct {
 }
 
 func parseAuthentications(headers headers) (*AuthenticationHeaders, error) {
-	d, err := ParseDKIMHeaders(headers)
+	var err error
+	var ah AuthenticationHeaders
+	ah.DKIMSignatures, err = ParseDKIMHeaders(headers)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse dkim headers: %v", err)
+		return &ah, fmt.Errorf("failed to parse dkim headers: %v", err)
 	}
-	a, err := ParseARCHeaders(headers)
+	ah.ARCSignatures, err = ParseARCHeaders(headers)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse arc headers: %v", err)
+		return &ah, fmt.Errorf("failed to parse arc headers: %v", err)
 	}
-	return &AuthenticationHeaders{
-		DKIMSignatures: d,
-		ARCSignatures:  a,
-	}, nil
+	return &ah, nil
 }
 
 func (a *AuthenticationHeaders) BodyHashCanonAndAlgo() []BodyCanonicalizationAndAlgorithm {
@@ -241,6 +240,9 @@ func NewMMAuth() *MMAuth {
 
 // ヘッダ、本文の書き込み
 func (m *MMAuth) Write(p []byte) (n int, err error) {
+	if m.err != nil {
+		return 0, m.err
+	}
 	return m.pw.Write(p)
 }
 

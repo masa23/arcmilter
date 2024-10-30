@@ -117,7 +117,7 @@ func ParseDKIMHeaders(headers []string) (*DKIMSignatures, error) {
 		case "dkim-signature":
 			sig, err := dkim.ParseSignature(h)
 			if err != nil {
-				return nil, fmt.Errorf("failed to parse dkim-signature: %v", err)
+				return &sigs, fmt.Errorf("failed to parse dkim-signature: %v", err)
 			}
 			sigs = append(sigs, sig)
 		}
@@ -220,33 +220,33 @@ func ParseARCHeaders(headers []string) (*ARCSignatures, error) {
 		case "arc-seal":
 			ret, err := arc.ParseARCSeal(h)
 			if err != nil {
-				return nil, fmt.Errorf("failed to parse arc-seal: %v", err)
+				return &sigs, fmt.Errorf("failed to parse arc-seal: %v", err)
 			}
 			// インスタンス番号が50以上の場合はエラー
 			if ret.InstanceNumber > 50 {
-				return nil, fmt.Errorf("instance number is too large")
+				return &sigs, fmt.Errorf("instance number is too large")
 			}
 			as := sigs.GetInstance(ret.InstanceNumber)
 			as.ARCSeal = ret
 		case "arc-authentication-results":
 			ret, err := arc.ParseARCAuthenticationResults(h)
 			if err != nil {
-				return nil, fmt.Errorf("failed to parse arc-authentication-results: %v", err)
+				return &sigs, fmt.Errorf("failed to parse arc-authentication-results: %v", err)
 			}
 			// インスタンス番号が50以上の場合はエラー
 			if ret.InstanceNumber > 50 {
-				return nil, fmt.Errorf("instance number is too large")
+				return &sigs, fmt.Errorf("instance number is too large")
 			}
 			as := sigs.GetInstance(ret.InstanceNumber)
 			as.ARCAuthenticationResults = ret
 		case "arc-message-signature":
 			ret, err := arc.ParseARCMessageSignature(h)
 			if err != nil {
-				return nil, fmt.Errorf("failed to parse arc-message-signature: %v", err)
+				return &sigs, fmt.Errorf("failed to parse arc-message-signature: %v", err)
 			}
 			// インスタンス番号が50以上の場合はエラー
 			if ret.InstanceNumber > 50 {
-				return nil, fmt.Errorf("instance number is too large")
+				return &sigs, fmt.Errorf("instance number is too large")
 			}
 			as := sigs.GetInstance(ret.InstanceNumber)
 			as.ARCMessageSignature = ret
@@ -258,11 +258,11 @@ func ParseARCHeaders(headers []string) (*ARCSignatures, error) {
 		// インスタンスが連続していない場合はエラー
 		ah := sigs.GetInstance(i)
 		if ah == nil {
-			return nil, fmt.Errorf("instance number is not continuous")
+			return &sigs, fmt.Errorf("instance number is not continuous")
 		}
 		// ARC-Seal、ARC-Authentication-Results、ARC-Message-Signatureがない場合はエラー
 		if ah.ARCSeal == nil || ah.ARCAuthenticationResults == nil || ah.ARCMessageSignature == nil {
-			return nil, fmt.Errorf("arc headers are missing")
+			return &sigs, fmt.Errorf("arc headers are missing")
 		}
 	}
 

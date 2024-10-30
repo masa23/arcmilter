@@ -324,12 +324,13 @@ func TestGetARCChainValidationResult(t *testing.T) {
 
 func TestParseARCHeaders(t *testing.T) {
 	testCases := []struct {
-		name   string
-		input  []string
-		expect ARCSignatures
+		name      string
+		input     []string
+		expect    ARCSignatures
+		expectErr bool
 	}{
 		{
-			name: "arc-seal",
+			name: "arc parse test pass",
 			input: []string{
 				"ARC-Seal: i=1; a=rsa-sha256; t=1617220000; cv=pass; d=example.com; s=selector; b=signature1",
 				"ARC-Seal: i=2; a=rsa-sha256; t=1617220000; cv=pass; d=example.com; s=selector; b=signature2",
@@ -341,6 +342,7 @@ func TestParseARCHeaders(t *testing.T) {
 				"ARC-Authentication-Results: i=2; example.com ; arc=pass; spf=pass",
 				"ARC-Authentication-Results: i=3; example.com ; arc=pass; dmarc=pass",
 			},
+			expectErr: false,
 			expect: ARCSignatures{
 				{
 					InstanceNumber: 1,
@@ -428,11 +430,32 @@ func TestParseARCHeaders(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "arc parse test fail",
+			input: []string{
+				"ARC-Seal: i=1; a=rsa-sha256; t=1617220000; cv=pass; d=example.com; s=selector; b=signature1",
+				"ARC-Seal: i=2; a=rsa-sha256; t=1617220000; cv=pass; d=example.com; s=selector; b=signature2",
+				"ARC-Seal: i=3; a=rsa-sha1; t=1617220000; cv=pass; d=example.com; s=selector; b=signature3",
+				"ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=example.com; s=selector; t=1617220000; h=from:to:subject; bh=bodyhash1; b=signature1",
+				"ARC-Message-Signature: i=3; a=rsa-sha256; c=relaxed/relaxed; d=example.com; s=selector; t=1617220000; h=from:to:subject; bh=bodyhash3; b=signature3",
+				"ARC-Authentication-Results: i=1; example.com; arc=pass; dkim=pass",
+				"ARC-Authentication-Results: i=2; example.com ; arc=pass; spf=pass",
+				"ARC-Authentication-Results: i=3; example.com ; arc=pass; dmarc=pass",
+			},
+			expectErr: true,
+			expect:    ARCSignatures{},
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := ParseARCHeaders(tc.input)
+			if err == nil && tc.expectErr {
+				t.Errorf("expected error, but no error")
+				return
+			} else if tc.expectErr {
+				return
+			}
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
@@ -509,9 +532,10 @@ func TestParseARCHeaders(t *testing.T) {
 
 func TestGetARCHeaders(t *testing.T) {
 	testCases := []struct {
-		name   string
-		input  []string
-		expect []string
+		name        string
+		input       []string
+		expect      []string
+		expectError bool
 	}{
 		{
 			name: "test1",
@@ -564,6 +588,21 @@ func TestGetARCHeaders(t *testing.T) {
 			},
 		},
 		{
+			name: "missing arc-seal",
+			input: []string{
+				"ARC-Seal: i=1; a=rsa-sha256; t=1617220000; cv=none; d=example.com; s=selector; b=signature1",
+				"ARC-Message-Signature: i=2; a=rsa-sha256; c=relaxed/relaxed; d=example.com; s=selector; t=1617220000; h=from:to:subject; bh=bodyhash2; b=signature2",
+				"ARC-Seal: i=2; a=rsa-sha256; t=1617220000; cv=pass; d=example.com; s=selector; b=signature2",
+				"ARC-Message-Signature: i=3; a=rsa-sha256; c=relaxed/relaxed; d=example.com; s=selector; t=1617220000; h=from:to:subject; bh=bodyhash3; b=signature3",
+				"ARC-Authentication-Results: i=2; example.com ; arc=pass; spf=pass",
+				"ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=example.com; s=selector; t=1617220000; h=from:to:subject; bh=bodyhash1; b=signature1",
+				"ARC-Authentication-Results: i=3; example.com ; arc=pass; dmarc=pass",
+				"ARC-Authentication-Results: i=1; example.com; arc=pass; dkim=pass",
+			},
+			expect:      []string{},
+			expectError: true,
+		},
+		{
 			name:   "no headers",
 			input:  []string{},
 			expect: []string{},
@@ -581,6 +620,12 @@ func TestGetARCHeaders(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			ahs, err := ParseARCHeaders(tc.input)
+			if err == nil && tc.expectError {
+				t.Errorf("expected error, but no error")
+				return
+			} else if tc.expectError {
+				return
+			}
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}
