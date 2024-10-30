@@ -129,6 +129,9 @@ type ARCSignatures []*arc.Signature
 
 // インスタンス番号を指定してSignatureを取得する
 func (s *ARCSignatures) GetInstance(i int) *arc.Signature {
+	if s == nil {
+		return nil
+	}
 	for _, sig := range *s {
 		if sig.InstanceNumber == i {
 			return sig
@@ -143,6 +146,9 @@ func (s *ARCSignatures) GetInstance(i int) *arc.Signature {
 
 // 最大のインスタンス番号を取得する
 func (s *ARCSignatures) GetMaxInstance() int {
+	if s == nil {
+		return 0
+	}
 	max := 0
 	for _, sig := range *s {
 		if sig.InstanceNumber > max {
@@ -154,6 +160,9 @@ func (s *ARCSignatures) GetMaxInstance() int {
 
 // 最後のARCのVerify結果を文字列で取得する
 func (s *ARCSignatures) GetVerifyResultString() string {
+	if s == nil {
+		return "arc=none"
+	}
 	max := s.GetMaxInstance()
 	if max == 0 {
 		return "arc=none"
@@ -169,6 +178,9 @@ func (s *ARCSignatures) GetVerifyResultString() string {
 
 // 最後のARCのVerify結果を取得する
 func (s *ARCSignatures) GetVerifyResult() arc.VerifyStatus {
+	if s == nil {
+		return arc.VerifyStatusNone
+	}
 	max := s.GetMaxInstance()
 	if max == 0 {
 		return arc.VerifyStatusNone
@@ -186,6 +198,9 @@ func (s *ARCSignatures) GetVerifyResult() arc.VerifyStatus {
 // i=1がNone以外の場合はFail
 // それ以外のインスタンスがPassでなければFail
 func (s *ARCSignatures) GetARCChainValidation() arc.ChainValidationResult {
+	if s == nil {
+		return arc.ChainValidationResultNone
+	}
 	max := s.GetMaxInstance()
 	// インスタンスがない場合はNone
 	if max == 0 {
@@ -271,6 +286,9 @@ func ParseARCHeaders(headers []string) (*ARCSignatures, error) {
 
 // ARCヘッダをSealで署名する順番にソートする
 func (s *ARCSignatures) GetARCHeaders() []string {
+	if s == nil {
+		return nil
+	}
 	var ret []string
 	max := s.GetMaxInstance()
 	if max <= 0 {

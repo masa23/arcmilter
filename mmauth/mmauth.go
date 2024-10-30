@@ -241,6 +241,9 @@ func NewMMAuth() *MMAuth {
 
 // ヘッダ、本文の書き込み
 func (m *MMAuth) Write(p []byte) (n int, err error) {
+	if m.err != nil {
+		return 0, m.err
+	}
 	return m.pw.Write(p)
 }
 
