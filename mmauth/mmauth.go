@@ -37,17 +37,18 @@ type AuthenticationHeaders struct {
 }
 
 func parseAuthentications(headers headers) (*AuthenticationHeaders, error) {
-	var err error
-	var ah AuthenticationHeaders
-	ah.DKIMSignatures, err = ParseDKIMHeaders(headers)
+	d, err := ParseDKIMHeaders(headers)
 	if err != nil {
-		return &ah, fmt.Errorf("failed to parse dkim headers: %v", err)
+		return nil, fmt.Errorf("failed to parse dkim headers: %v", err)
 	}
-	ah.ARCSignatures, err = ParseARCHeaders(headers)
+	a, err := ParseARCHeaders(headers)
 	if err != nil {
-		return &ah, fmt.Errorf("failed to parse arc headers: %v", err)
+		return nil, fmt.Errorf("failed to parse arc headers: %v", err)
 	}
-	return &ah, nil
+	return &AuthenticationHeaders{
+		DKIMSignatures: d,
+		ARCSignatures:  a,
+	}, nil
 }
 
 func (a *AuthenticationHeaders) BodyHashCanonAndAlgo() []BodyCanonicalizationAndAlgorithm {
