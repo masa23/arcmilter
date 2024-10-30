@@ -2,6 +2,7 @@ package mmauth
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -112,6 +113,7 @@ func (m *MMAuth) parsedMail() {
 	var err error
 	defer func() {
 		close(m.done)
+		m.pr.Close()
 	}()
 
 	// ヘッダの取得
@@ -241,10 +243,11 @@ func NewMMAuth() *MMAuth {
 
 // ヘッダ、本文の書き込み
 func (m *MMAuth) Write(p []byte) (n int, err error) {
-	if m.err != nil {
-		return 0, m.err
+	n, err = m.pw.Write(p)
+	if errors.Is(err, io.ErrClosedPipe) && m.err != nil {
+		return n, m.err
 	}
-	return m.pw.Write(p)
+	return
 }
 
 // メールメッセージ処理の終了
