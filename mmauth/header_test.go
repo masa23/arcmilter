@@ -11,9 +11,10 @@ import (
 
 func Test_readHeader(t *testing.T) {
 	testCases := []struct {
-		name   string
-		input  string
-		expect headers
+		name          string
+		input         string
+		expect        headers
+		expectedError bool
 	}{
 		{
 			name:   "empty",
@@ -38,6 +39,23 @@ func Test_readHeader(t *testing.T) {
 				"header:hoge\r\n",
 			},
 		},
+		{
+			name:  "non body",
+			input: "header:hoge\r\n\r\n",
+			expect: headers{
+				"header:hoge\r\n",
+			},
+		},
+		{
+			name:          "non header crlf",
+			input:         "header:hoge",
+			expectedError: true,
+		},
+		{
+			name:          "non body crlf",
+			input:         "header:hoge\r\nbody",
+			expectedError: true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -45,8 +63,15 @@ func Test_readHeader(t *testing.T) {
 			r := strings.NewReader(tc.input)
 			br := bufio.NewReader(r)
 			got, err := readHeader(br)
+			if err == nil && tc.expectedError {
+				t.Errorf("expected error, but no error")
+				return
+			} else if tc.expectedError {
+				return
+			}
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
+				return
 			}
 			if len(got) != len(tc.expect) {
 				t.Errorf("unexpected result: got=%d, expect=%d", len(got), len(tc.expect))
