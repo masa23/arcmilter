@@ -269,29 +269,36 @@ func (m *MMAuth) Close() error {
 
 // 付与されているDKIM・ARCの署名検証を行う
 func (m *MMAuth) Verify() {
-	for _, d := range *m.AuthenticationHeaders.DKIMSignatures {
-		can := d.GetCanonicalizationAndAlgorithm()
-		if can != nil {
-			bodyHash := m.GetBodyHash(BodyCanonicalizationAndAlgorithm{
-				Body:      Canonicalization(can.Body),
-				Algorithm: can.HashAlgo,
-				Limit:     d.Limit,
-			})
-			d.Verify(m.Headers, bodyHash, nil)
+	if m.AuthenticationHeaders == nil {
+		return
+	}
+	if m.AuthenticationHeaders.DKIMSignatures != nil {
+		for _, d := range *m.AuthenticationHeaders.DKIMSignatures {
+			can := d.GetCanonicalizationAndAlgorithm()
+			if can != nil {
+				bodyHash := m.GetBodyHash(BodyCanonicalizationAndAlgorithm{
+					Body:      Canonicalization(can.Body),
+					Algorithm: can.HashAlgo,
+					Limit:     d.Limit,
+				})
+				d.Verify(m.Headers, bodyHash, nil)
+			}
 		}
 	}
 	// 一番最後のARCの署名を検証する
-	max := m.AuthenticationHeaders.ARCSignatures.GetMaxInstance()
-	if max > 0 {
-		arc := m.AuthenticationHeaders.ARCSignatures.GetInstance(max)
-		can := arc.ARCMessageSignature.GetCanonicalizationAndAlgorithm()
-		if can != nil {
-			bodyHash := m.GetBodyHash(BodyCanonicalizationAndAlgorithm{
-				Body:      Canonicalization(can.Body),
-				Algorithm: can.HashAlgo,
-				Limit:     0,
-			})
-			arc.Verify(m.Headers, bodyHash, nil)
+	if m.AuthenticationHeaders.ARCSignatures != nil {
+		max := m.AuthenticationHeaders.ARCSignatures.GetMaxInstance()
+		if max > 0 {
+			arc := m.AuthenticationHeaders.ARCSignatures.GetInstance(max)
+			can := arc.ARCMessageSignature.GetCanonicalizationAndAlgorithm()
+			if can != nil {
+				bodyHash := m.GetBodyHash(BodyCanonicalizationAndAlgorithm{
+					Body:      Canonicalization(can.Body),
+					Algorithm: can.HashAlgo,
+					Limit:     0,
+				})
+				arc.Verify(m.Headers, bodyHash, nil)
+			}
 		}
 	}
 }
