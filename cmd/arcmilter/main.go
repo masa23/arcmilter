@@ -240,6 +240,11 @@ func execChildProcess(logfd, msockfd *os.File) {
 	err = cmd.Wait()
 	if err != nil {
 		log.Printf("child process wait error: %v", err)
+		// 子プロセスが異常終了した場合は再起動
+		// すでに子プロセスが2以上起動している場合は再起動しない
+		if len(childlen) < 2 {
+			go execChildProcess(logfd, msockfd)
+		}
 	}
 	// childlenから消す
 	for i, c := range childlen {
