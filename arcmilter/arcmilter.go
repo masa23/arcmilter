@@ -77,7 +77,6 @@ func debugLog(format string, v ...interface{}) {
 
 func (s *Session) Connect(host string, family string, port uint16, addr string, m *milter.Modifier) (*milter.Response, error) {
 	debugLog("Connect: %s", addr)
-	s.mmauth = mmauth.NewMMAuth()
 	if ip := net.ParseIP(addr); ip != nil {
 		s.remoteAddr = ip
 	}
@@ -99,6 +98,7 @@ func (s *Session) MailFrom(from string, esmtpArgs string, m *milter.Modifier) (*
 
 func (s *Session) RcptTo(rcptTo string, esmtpArgs string, m *milter.Modifier) (*milter.Response, error) {
 	debugLog("RcptTo: %s", rcptTo)
+	s.mmauth = mmauth.NewMMAuth()
 	// SMTP認証済みもしくはIPアドレスがMyNetworksに含まれている場合はARC署名を行わない
 	if s.authn != "" || s.conf.IsMyNetwork(s.remoteAddr) {
 		return milter.RespContinue, nil
@@ -228,6 +228,9 @@ func ARCSign(s *Session, m *milter.Modifier) {
 	}
 
 	if domain, ok := (s.conf.Domains)[s.rcptToDomain]; ok && domain.ARC {
+		if s.mmauth.AuthenticationHeaders == nil {
+			log.Printf("AuthenticationHeaders is nil")
+		}
 		ah := s.mmauth.AuthenticationHeaders.ARCSignatures
 
 		// ARC-Chain-Validation-Resultがfailの場合はARC署名を行わない
