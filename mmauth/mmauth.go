@@ -72,14 +72,17 @@ func (a *AuthenticationHeaders) BodyHashCanonAndAlgo() []BodyCanonicalizationAnd
 	}
 
 	for _, arc := range *a.ARCSignatures {
-		sign := arc.GetARCMessageSignature()
-		_, body, err := parseHeaderCanonicalization(sign.Canonicalization)
+		ams := arc.GetARCMessageSignature()
+		if ams == nil {
+			continue
+		}
+		_, body, err := parseHeaderCanonicalization(ams.Canonicalization)
 		if err != nil {
 			continue
 		}
 		bca := BodyCanonicalizationAndAlgorithm{
 			Body:      body,
-			Algorithm: hashAlgo(SignatureAlgorithm(sign.Algorithm)),
+			Algorithm: hashAlgo(SignatureAlgorithm(ams.Algorithm)),
 		}
 		if !isCcanonicalizationBodyAndAlgorithm(bca, ret) {
 			ret = append(ret, bca)
