@@ -70,6 +70,9 @@ func (a *AuthenticationHeaders) BodyHashCanonAndAlgo() []BodyCanonicalizationAnd
 	}
 
 	for _, arc := range *a.ARCSignatures {
+		if arc.ARCMessageSignature == nil {
+			continue
+		}
 		_, body, err := parseHeaderCanonicalization(arc.ARCMessageSignature.Canonicalization)
 		if err != nil {
 			continue
