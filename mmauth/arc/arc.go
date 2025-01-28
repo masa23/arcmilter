@@ -92,35 +92,23 @@ func (arc *Signature) GetInstanceNumber() int {
 }
 
 func (arc *Signature) GetARCSeal() *ARCSeal {
-	if arc.arcSeal == nil {
-		return &ARCSeal{}
-	}
 	return arc.arcSeal
 }
 
 func (arc *Signature) GetARCMessageSignature() *ARCMessageSignature {
-	if arc.arcMessageSignature == nil {
-		return &ARCMessageSignature{}
-	}
 	return arc.arcMessageSignature
 }
 
 func (arc *Signature) GetARCAuthenticationResults() *ARCAuthenticationResults {
-	if arc.arcAuthenticationResults == nil {
-		return &ARCAuthenticationResults{}
-	}
 	return arc.arcAuthenticationResults
 }
 
 func (arc *Signature) GetVerifyResult() *VerifyResult {
-	if arc.VerifyResult == nil {
-		return &VerifyResult{}
-	}
 	return arc.VerifyResult
 }
 
 func (arc *Signature) Verify(headers []string, bodyHash string, domainKey *domainkey.DomainKey) {
-	if arc.arcSeal == nil || arc.arcMessageSignature == nil {
+	if arc == nil || arc.arcSeal == nil || arc.arcMessageSignature == nil {
 		arc.VerifyResult = &VerifyResult{
 			status: VerifyStatusNeutral,
 			err:    fmt.Errorf("arc is not found"),

@@ -180,7 +180,7 @@ func (s *Signatures) GetARCHeaders() []string {
 
 	for i := 1; i <= max; i++ {
 		arc := s.GetInstance(i)
-		if arc.arcAuthenticationResults != nil && arc.arcMessageSignature != nil && arc.arcSeal != nil {
+		if arc != nil && arc.arcAuthenticationResults != nil && arc.arcMessageSignature != nil && arc.arcSeal != nil {
 			ret = append(ret, arc.arcAuthenticationResults.Raw())
 			ret = append(ret, arc.arcMessageSignature.Raw())
 			ret = append(ret, arc.arcSeal.Raw())
