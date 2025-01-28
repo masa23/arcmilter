@@ -269,10 +269,10 @@ func arcHeaderSort(h []string) []string {
 
 	for i := 1; i <= max; i++ {
 		arc := ah.getInstance(i)
-		if arc.ARCAuthenticationResults != nil && arc.ARCMessageSignature != nil && arc.ARCSeal != nil {
-			ret = append(ret, arc.ARCAuthenticationResults.raw)
-			ret = append(ret, arc.ARCMessageSignature.raw)
-			ret = append(ret, arc.ARCSeal.raw)
+		if arc.arcAuthenticationResults != nil && arc.arcMessageSignature != nil && arc.arcSeal != nil {
+			ret = append(ret, arc.arcAuthenticationResults.raw)
+			ret = append(ret, arc.arcMessageSignature.raw)
+			ret = append(ret, arc.arcSeal.raw)
 		}
 	}
 	return ret
@@ -282,12 +282,12 @@ type signatures []*Signature
 
 func (s *signatures) getInstance(i int) *Signature {
 	for _, sig := range *s {
-		if sig.InstanceNumber == i {
+		if sig.instanceNumber == i {
 			return sig
 		}
 	}
 	sig := &Signature{
-		InstanceNumber: i,
+		instanceNumber: i,
 	}
 	*s = append(*s, sig)
 	return sig
@@ -296,8 +296,8 @@ func (s *signatures) getInstance(i int) *Signature {
 func (s *signatures) getMaxInstance() int {
 	max := 0
 	for _, sig := range *s {
-		if sig.InstanceNumber > max {
-			max = sig.InstanceNumber
+		if sig.instanceNumber > max {
+			max = sig.instanceNumber
 		}
 	}
 	return max
@@ -315,21 +315,21 @@ func parseARCHeaders(headers []string) (*signatures, error) {
 				return nil, fmt.Errorf("failed to parse arc-seal: %v", err)
 			}
 			as := sigs.getInstance(ret.InstanceNumber)
-			as.ARCSeal = ret
+			as.arcSeal = ret
 		case "arc-authentication-results":
 			ret, err := ParseARCAuthenticationResults(h)
 			if err != nil {
 				return nil, fmt.Errorf("failed to parse arc-authentication-results: %v", err)
 			}
 			as := sigs.getInstance(ret.InstanceNumber)
-			as.ARCAuthenticationResults = ret
+			as.arcAuthenticationResults = ret
 		case "arc-message-signature":
 			ret, err := ParseARCMessageSignature(h)
 			if err != nil {
 				return nil, fmt.Errorf("failed to parse arc-message-signature: %v", err)
 			}
 			as := sigs.getInstance(ret.InstanceNumber)
-			as.ARCMessageSignature = ret
+			as.arcMessageSignature = ret
 		}
 	}
 

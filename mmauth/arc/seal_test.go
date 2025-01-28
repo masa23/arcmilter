@@ -325,8 +325,8 @@ func Test_parseARCHeader(t *testing.T) {
 			},
 			expect: signatures{
 				{
-					InstanceNumber: 1,
-					ARCSeal: &ARCSeal{
+					instanceNumber: 1,
+					arcSeal: &ARCSeal{
 						InstanceNumber:  1,
 						Algorithm:       SignatureAlgorithmRSA_SHA256,
 						Timestamp:       1617220000,
@@ -336,13 +336,13 @@ func Test_parseARCHeader(t *testing.T) {
 						Signature:       "signature1",
 						raw:             "ARC-Seal: i=1; a=rsa-sha256; t=1617220000; cv=pass; d=example.com; s=selector; b=signature1",
 					},
-					ARCAuthenticationResults: &ARCAuthenticationResults{
+					arcAuthenticationResults: &ARCAuthenticationResults{
 						InstanceNumber: 1,
 						AuthServId:     "example.com",
 						Results:        []string{"arc=pass", "dkim=pass"},
 						raw:            "ARC-Authentication-Results: i=1; example.com; arc=pass; dkim=pass",
 					},
-					ARCMessageSignature: &ARCMessageSignature{
+					arcMessageSignature: &ARCMessageSignature{
 						InstanceNumber:   1,
 						Algorithm:        SignatureAlgorithmRSA_SHA256,
 						Canonicalization: "relaxed/relaxed",
@@ -356,8 +356,8 @@ func Test_parseARCHeader(t *testing.T) {
 					},
 				},
 				{
-					InstanceNumber: 2,
-					ARCSeal: &ARCSeal{
+					instanceNumber: 2,
+					arcSeal: &ARCSeal{
 						InstanceNumber:  2,
 						Algorithm:       SignatureAlgorithmRSA_SHA256,
 						Timestamp:       1617220000,
@@ -367,13 +367,13 @@ func Test_parseARCHeader(t *testing.T) {
 						Signature:       "signature2",
 						raw:             "ARC-Seal: i=2; a=rsa-sha256; t=1617220000; cv=pass; d=example.com; s=selector; b=signature2",
 					},
-					ARCAuthenticationResults: &ARCAuthenticationResults{
+					arcAuthenticationResults: &ARCAuthenticationResults{
 						InstanceNumber: 2,
 						AuthServId:     "example.com",
 						Results:        []string{"arc=pass", "spf=pass"},
 						raw:            "ARC-Authentication-Results: i=2; example.com ; arc=pass; spf=pass",
 					},
-					ARCMessageSignature: &ARCMessageSignature{
+					arcMessageSignature: &ARCMessageSignature{
 						InstanceNumber:   2,
 						Algorithm:        SignatureAlgorithmRSA_SHA256,
 						Canonicalization: "relaxed/relaxed",
@@ -387,8 +387,8 @@ func Test_parseARCHeader(t *testing.T) {
 					},
 				},
 				{
-					InstanceNumber: 3,
-					ARCSeal: &ARCSeal{
+					instanceNumber: 3,
+					arcSeal: &ARCSeal{
 						InstanceNumber:  3,
 						Algorithm:       SignatureAlgorithmRSA_SHA1,
 						Timestamp:       1617220000,
@@ -398,13 +398,13 @@ func Test_parseARCHeader(t *testing.T) {
 						Signature:       "signature3",
 						raw:             "ARC-Seal: i=3; a=rsa-sha1; t=1617220000; cv=pass; d=example.com; s=selector; b=signature3",
 					},
-					ARCAuthenticationResults: &ARCAuthenticationResults{
+					arcAuthenticationResults: &ARCAuthenticationResults{
 						InstanceNumber: 3,
 						AuthServId:     "example.com",
 						Results:        []string{"arc=pass", "dmarc=pass"},
 						raw:            "ARC-Authentication-Results: i=3; example.com ; arc=pass; dmarc=pass",
 					},
-					ARCMessageSignature: &ARCMessageSignature{
+					arcMessageSignature: &ARCMessageSignature{
 						InstanceNumber:   3,
 						Algorithm:        SignatureAlgorithmRSA_SHA256,
 						Canonicalization: "relaxed/relaxed",
@@ -431,76 +431,76 @@ func Test_parseARCHeader(t *testing.T) {
 				t.Errorf("unexpected result: got=%d, expect=%d", len(*got), len(tc.expect))
 			}
 			for i, v := range *got {
-				if v.InstanceNumber != tc.expect[i].InstanceNumber {
-					t.Errorf("unexpected result: *got=%d, expect=%d", v.InstanceNumber, tc.expect[i].InstanceNumber)
+				if v.instanceNumber != tc.expect[i].instanceNumber {
+					t.Errorf("unexpected result: *got=%d, expect=%d", v.instanceNumber, tc.expect[i].instanceNumber)
 				}
-				if v.ARCSeal.InstanceNumber != tc.expect[i].ARCSeal.InstanceNumber {
-					t.Errorf("unexpected result: *got=%d, expect=%d", v.ARCSeal.InstanceNumber, tc.expect[i].ARCSeal.InstanceNumber)
+				if v.arcSeal.InstanceNumber != tc.expect[i].arcSeal.InstanceNumber {
+					t.Errorf("unexpected result: *got=%d, expect=%d", v.arcSeal.InstanceNumber, tc.expect[i].arcSeal.InstanceNumber)
 				}
-				if v.ARCSeal.Algorithm != tc.expect[i].ARCSeal.Algorithm {
-					t.Errorf("unexpected result: *got=%s, expect=%s", v.ARCSeal.Algorithm, tc.expect[i].ARCSeal.Algorithm)
+				if v.arcSeal.Algorithm != tc.expect[i].arcSeal.Algorithm {
+					t.Errorf("unexpected result: *got=%s, expect=%s", v.arcSeal.Algorithm, tc.expect[i].arcSeal.Algorithm)
 				}
-				if v.ARCSeal.Timestamp != tc.expect[i].ARCSeal.Timestamp {
-					t.Errorf("unexpected result: *got=%d, expect=%d", v.ARCSeal.Timestamp, tc.expect[i].ARCSeal.Timestamp)
+				if v.arcSeal.Timestamp != tc.expect[i].arcSeal.Timestamp {
+					t.Errorf("unexpected result: *got=%d, expect=%d", v.arcSeal.Timestamp, tc.expect[i].arcSeal.Timestamp)
 				}
-				if v.ARCSeal.ChainValidation != tc.expect[i].ARCSeal.ChainValidation {
-					t.Errorf("unexpected result: *got=%s, expect=%s", v.ARCSeal.ChainValidation, tc.expect[i].ARCSeal.ChainValidation)
+				if v.arcSeal.ChainValidation != tc.expect[i].arcSeal.ChainValidation {
+					t.Errorf("unexpected result: *got=%s, expect=%s", v.arcSeal.ChainValidation, tc.expect[i].arcSeal.ChainValidation)
 				}
-				if v.ARCSeal.Domain != tc.expect[i].ARCSeal.Domain {
-					t.Errorf("unexpected result: *got=%s, expect=%s", v.ARCSeal.Domain, tc.expect[i].ARCSeal.Domain)
+				if v.arcSeal.Domain != tc.expect[i].arcSeal.Domain {
+					t.Errorf("unexpected result: *got=%s, expect=%s", v.arcSeal.Domain, tc.expect[i].arcSeal.Domain)
 				}
-				if v.ARCSeal.Selector != tc.expect[i].ARCSeal.Selector {
-					t.Errorf("unexpected result: *got=%s, expect=%s", v.ARCSeal.Selector, tc.expect[i].ARCSeal.Selector)
+				if v.arcSeal.Selector != tc.expect[i].arcSeal.Selector {
+					t.Errorf("unexpected result: *got=%s, expect=%s", v.arcSeal.Selector, tc.expect[i].arcSeal.Selector)
 				}
-				if v.ARCSeal.Signature != tc.expect[i].ARCSeal.Signature {
-					t.Errorf("unexpected result: *got=%s, expect=%s", v.ARCSeal.Signature, tc.expect[i].ARCSeal.Signature)
+				if v.arcSeal.Signature != tc.expect[i].arcSeal.Signature {
+					t.Errorf("unexpected result: *got=%s, expect=%s", v.arcSeal.Signature, tc.expect[i].arcSeal.Signature)
 				}
-				if v.ARCSeal.raw != tc.expect[i].ARCSeal.raw {
-					t.Errorf("unexpected result: *got=%s, expect=%s", v.ARCSeal.raw, tc.expect[i].ARCSeal.raw)
+				if v.arcSeal.raw != tc.expect[i].arcSeal.raw {
+					t.Errorf("unexpected result: *got=%s, expect=%s", v.arcSeal.raw, tc.expect[i].arcSeal.raw)
 				}
-				if v.ARCAuthenticationResults.InstanceNumber != tc.expect[i].ARCAuthenticationResults.InstanceNumber {
-					t.Errorf("unexpected result: *got=%d, expect=%d", v.ARCAuthenticationResults.InstanceNumber, tc.expect[i].ARCAuthenticationResults.InstanceNumber)
+				if v.arcAuthenticationResults.InstanceNumber != tc.expect[i].arcAuthenticationResults.InstanceNumber {
+					t.Errorf("unexpected result: *got=%d, expect=%d", v.arcAuthenticationResults.InstanceNumber, tc.expect[i].arcAuthenticationResults.InstanceNumber)
 				}
-				if v.ARCAuthenticationResults.AuthServId != tc.expect[i].ARCAuthenticationResults.AuthServId {
-					t.Errorf("unexpected result: *got=%s, expect=%s", v.ARCAuthenticationResults.AuthServId, tc.expect[i].ARCAuthenticationResults.AuthServId)
+				if v.arcAuthenticationResults.AuthServId != tc.expect[i].arcAuthenticationResults.AuthServId {
+					t.Errorf("unexpected result: *got=%s, expect=%s", v.arcAuthenticationResults.AuthServId, tc.expect[i].arcAuthenticationResults.AuthServId)
 				}
-				for j, r := range v.ARCAuthenticationResults.Results {
-					if r != tc.expect[i].ARCAuthenticationResults.Results[j] {
-						t.Errorf("unexpected result: *got=%s, expect=%s", r, tc.expect[i].ARCAuthenticationResults.Results[j])
+				for j, r := range v.arcAuthenticationResults.Results {
+					if r != tc.expect[i].arcAuthenticationResults.Results[j] {
+						t.Errorf("unexpected result: *got=%s, expect=%s", r, tc.expect[i].arcAuthenticationResults.Results[j])
 					}
 				}
-				if v.ARCAuthenticationResults.raw != tc.expect[i].ARCAuthenticationResults.raw {
-					t.Errorf("unexpected result: *got=%s, expect=%s", v.ARCAuthenticationResults.raw, tc.expect[i].ARCAuthenticationResults.raw)
+				if v.arcAuthenticationResults.raw != tc.expect[i].arcAuthenticationResults.raw {
+					t.Errorf("unexpected result: *got=%s, expect=%s", v.arcAuthenticationResults.raw, tc.expect[i].arcAuthenticationResults.raw)
 				}
-				if v.ARCMessageSignature.InstanceNumber != tc.expect[i].ARCMessageSignature.InstanceNumber {
-					t.Errorf("unexpected result: *got=%d, expect=%d", v.ARCMessageSignature.InstanceNumber, tc.expect[i].ARCMessageSignature.InstanceNumber)
+				if v.arcMessageSignature.InstanceNumber != tc.expect[i].arcMessageSignature.InstanceNumber {
+					t.Errorf("unexpected result: *got=%d, expect=%d", v.arcMessageSignature.InstanceNumber, tc.expect[i].arcMessageSignature.InstanceNumber)
 				}
-				if v.ARCMessageSignature.Algorithm != tc.expect[i].ARCMessageSignature.Algorithm {
-					t.Errorf("unexpected result: *got=%s, expect=%s", v.ARCMessageSignature.Algorithm, tc.expect[i].ARCMessageSignature.Algorithm)
+				if v.arcMessageSignature.Algorithm != tc.expect[i].arcMessageSignature.Algorithm {
+					t.Errorf("unexpected result: *got=%s, expect=%s", v.arcMessageSignature.Algorithm, tc.expect[i].arcMessageSignature.Algorithm)
 				}
-				if v.ARCMessageSignature.Canonicalization != tc.expect[i].ARCMessageSignature.Canonicalization {
-					t.Errorf("unexpected result: *got=%s, expect=%s", v.ARCMessageSignature.Canonicalization, tc.expect[i].ARCMessageSignature.Canonicalization)
+				if v.arcMessageSignature.Canonicalization != tc.expect[i].arcMessageSignature.Canonicalization {
+					t.Errorf("unexpected result: *got=%s, expect=%s", v.arcMessageSignature.Canonicalization, tc.expect[i].arcMessageSignature.Canonicalization)
 				}
-				if v.ARCMessageSignature.Domain != tc.expect[i].ARCMessageSignature.Domain {
-					t.Errorf("unexpected result: *got=%s, expect=%s", v.ARCMessageSignature.Domain, tc.expect[i].ARCMessageSignature.Domain)
+				if v.arcMessageSignature.Domain != tc.expect[i].arcMessageSignature.Domain {
+					t.Errorf("unexpected result: *got=%s, expect=%s", v.arcMessageSignature.Domain, tc.expect[i].arcMessageSignature.Domain)
 				}
-				if v.ARCMessageSignature.Selector != tc.expect[i].ARCMessageSignature.Selector {
-					t.Errorf("unexpected result: *got=%s, expect=%s", v.ARCMessageSignature.Selector, tc.expect[i].ARCMessageSignature.Selector)
+				if v.arcMessageSignature.Selector != tc.expect[i].arcMessageSignature.Selector {
+					t.Errorf("unexpected result: *got=%s, expect=%s", v.arcMessageSignature.Selector, tc.expect[i].arcMessageSignature.Selector)
 				}
-				if v.ARCMessageSignature.Timestamp != tc.expect[i].ARCMessageSignature.Timestamp {
-					t.Errorf("unexpected result: *got=%d, expect=%d", v.ARCMessageSignature.Timestamp, tc.expect[i].ARCMessageSignature.Timestamp)
+				if v.arcMessageSignature.Timestamp != tc.expect[i].arcMessageSignature.Timestamp {
+					t.Errorf("unexpected result: *got=%d, expect=%d", v.arcMessageSignature.Timestamp, tc.expect[i].arcMessageSignature.Timestamp)
 				}
-				if v.ARCMessageSignature.Headers != tc.expect[i].ARCMessageSignature.Headers {
-					t.Errorf("unexpected result: *got=%s, expect=%s", v.ARCMessageSignature.Headers, tc.expect[i].ARCMessageSignature.Headers)
+				if v.arcMessageSignature.Headers != tc.expect[i].arcMessageSignature.Headers {
+					t.Errorf("unexpected result: *got=%s, expect=%s", v.arcMessageSignature.Headers, tc.expect[i].arcMessageSignature.Headers)
 				}
-				if v.ARCMessageSignature.BodyHash != tc.expect[i].ARCMessageSignature.BodyHash {
-					t.Errorf("unexpected result: *got=%s, expect=%s", v.ARCMessageSignature.BodyHash, tc.expect[i].ARCMessageSignature.BodyHash)
+				if v.arcMessageSignature.BodyHash != tc.expect[i].arcMessageSignature.BodyHash {
+					t.Errorf("unexpected result: *got=%s, expect=%s", v.arcMessageSignature.BodyHash, tc.expect[i].arcMessageSignature.BodyHash)
 				}
-				if v.ARCMessageSignature.Signature != tc.expect[i].ARCMessageSignature.Signature {
-					t.Errorf("unexpected result: *got=%s, expect=%s", v.ARCMessageSignature.Signature, tc.expect[i].ARCMessageSignature.Signature)
+				if v.arcMessageSignature.Signature != tc.expect[i].arcMessageSignature.Signature {
+					t.Errorf("unexpected result: *got=%s, expect=%s", v.arcMessageSignature.Signature, tc.expect[i].arcMessageSignature.Signature)
 				}
-				if v.ARCMessageSignature.raw != tc.expect[i].ARCMessageSignature.raw {
-					t.Errorf("unexpected result: *got=%s, expect=%s", v.ARCMessageSignature.raw, tc.expect[i].ARCMessageSignature.raw)
+				if v.arcMessageSignature.raw != tc.expect[i].arcMessageSignature.raw {
+					t.Errorf("unexpected result: *got=%s, expect=%s", v.arcMessageSignature.raw, tc.expect[i].arcMessageSignature.raw)
 				}
 			}
 		})

@@ -7,6 +7,8 @@ import (
 	"io"
 	"sync"
 
+	"github.com/masa23/arcmilter/mmauth/arc"
+	"github.com/masa23/arcmilter/mmauth/dkim"
 	"github.com/masa23/arcmilter/mmauth/internal/bodyhash"
 	"github.com/masa23/arcmilter/mmauth/internal/canonical"
 )
@@ -33,16 +35,16 @@ const (
 
 // 認証ヘッダを保持する構造体
 type AuthenticationHeaders struct {
-	DKIMSignatures *DKIMSignatures
-	ARCSignatures  *ARCSignatures
+	DKIMSignatures *dkim.Signatures
+	ARCSignatures  *arc.Signatures
 }
 
 func parseAuthentications(headers headers) (*AuthenticationHeaders, error) {
-	d, err := ParseDKIMHeaders(headers)
+	d, err := dkim.ParseDKIMHeaders(headers)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse dkim headers: %v", err)
 	}
-	a, err := ParseARCHeaders(headers)
+	a, err := arc.ParseARCHeaders(headers)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse arc headers: %v", err)
 	}
@@ -70,13 +72,14 @@ func (a *AuthenticationHeaders) BodyHashCanonAndAlgo() []BodyCanonicalizationAnd
 	}
 
 	for _, arc := range *a.ARCSignatures {
-		_, body, err := parseHeaderCanonicalization(arc.ARCMessageSignature.Canonicalization)
+		sign := arc.GetARCMessageSignature()
+		_, body, err := parseHeaderCanonicalization(sign.Canonicalization)
 		if err != nil {
 			continue
 		}
 		bca := BodyCanonicalizationAndAlgorithm{
 			Body:      body,
-			Algorithm: hashAlgo(SignatureAlgorithm(arc.ARCMessageSignature.Algorithm)),
+			Algorithm: hashAlgo(SignatureAlgorithm(sign.Algorithm)),
 		}
 		if !isCcanonicalizationBodyAndAlgorithm(bca, ret) {
 			ret = append(ret, bca)
@@ -290,7 +293,8 @@ func (m *MMAuth) Verify() {
 		max := m.AuthenticationHeaders.ARCSignatures.GetMaxInstance()
 		if max > 0 {
 			arc := m.AuthenticationHeaders.ARCSignatures.GetInstance(max)
-			can := arc.ARCMessageSignature.GetCanonicalizationAndAlgorithm()
+			sign := arc.GetARCMessageSignature()
+			can := sign.GetCanonicalizationAndAlgorithm()
 			if can != nil {
 				bodyHash := m.GetBodyHash(BodyCanonicalizationAndAlgorithm{
 					Body:      Canonicalization(can.Body),
