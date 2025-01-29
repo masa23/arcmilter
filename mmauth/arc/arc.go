@@ -80,15 +80,35 @@ func isChainValidationResult(s string) bool {
 }
 
 type Signature struct {
-	InstanceNumber           int
-	ARCSeal                  *ARCSeal
-	ARCMessageSignature      *ARCMessageSignature
-	ARCAuthenticationResults *ARCAuthenticationResults
+	instanceNumber           int
+	arcSeal                  *ARCSeal
+	arcMessageSignature      *ARCMessageSignature
+	arcAuthenticationResults *ARCAuthenticationResults
 	VerifyResult             *VerifyResult
 }
 
+func (arc *Signature) GetInstanceNumber() int {
+	return arc.instanceNumber
+}
+
+func (arc *Signature) GetARCSeal() *ARCSeal {
+	return arc.arcSeal
+}
+
+func (arc *Signature) GetARCMessageSignature() *ARCMessageSignature {
+	return arc.arcMessageSignature
+}
+
+func (arc *Signature) GetARCAuthenticationResults() *ARCAuthenticationResults {
+	return arc.arcAuthenticationResults
+}
+
+func (arc *Signature) GetVerifyResult() *VerifyResult {
+	return arc.VerifyResult
+}
+
 func (arc *Signature) Verify(headers []string, bodyHash string, domainKey *domainkey.DomainKey) {
-	if arc.ARCSeal == nil || arc.ARCMessageSignature == nil {
+	if arc == nil || arc.arcSeal == nil || arc.arcMessageSignature == nil {
 		arc.VerifyResult = &VerifyResult{
 			status: VerifyStatusNeutral,
 			err:    fmt.Errorf("arc is not found"),
@@ -97,7 +117,7 @@ func (arc *Signature) Verify(headers []string, bodyHash string, domainKey *domai
 		return
 	}
 	if domainKey == nil {
-		domKey, err := domainkey.LookupARCDomainKey(arc.ARCSeal.Selector, arc.ARCSeal.Domain)
+		domKey, err := domainkey.LookupARCDomainKey(arc.arcSeal.Selector, arc.arcSeal.Domain)
 		if errors.Is(err, domainkey.ErrNoRecordFound) {
 			arc.VerifyResult = &VerifyResult{
 				status: VerifyStatusPermErr,
@@ -115,8 +135,8 @@ func (arc *Signature) Verify(headers []string, bodyHash string, domainKey *domai
 		}
 		domainKey = &domKey
 	}
-	sealResult := arc.ARCSeal.Verify(headers, domainKey)
-	amsResult := arc.ARCMessageSignature.Verify(headers, bodyHash, domainKey)
+	sealResult := arc.arcSeal.Verify(headers, domainKey)
+	amsResult := arc.arcMessageSignature.Verify(headers, bodyHash, domainKey)
 
 	// ARC-Authentication-ResultsとARC-Message-Signatureの検証結果が両方ともpassの場合はARCの検証結果をpassとする
 	if sealResult.status == VerifyStatusPass && amsResult.status == VerifyStatusPass {
