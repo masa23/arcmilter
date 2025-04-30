@@ -106,7 +106,7 @@ func LookupDMARCRecord(domain string, resolver TXTLookupFunc) (DMARC, error) {
 			return DMARC{}, ErrNoRecordFound
 		}
 	} else if err != nil {
-		return DMARC{}, ErrDNSLookupFailed
+		return DMARC{}, fmt.Errorf("dns lookup failed: %w", err)
 	}
 	for _, v := range res {
 		d, err := ParseDMARCRecord(v)
