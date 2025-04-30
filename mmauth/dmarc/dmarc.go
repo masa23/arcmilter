@@ -126,6 +126,10 @@ func ParseDMARCRecord(raw string) (DMARC, error) {
 
 	pairs := strings.Split(raw, ";")
 	for _, pair := range pairs {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
 		k, v, _ := strings.Cut(pair, "=")
 		switch strings.TrimSpace(k) {
 		case "v":
@@ -189,7 +193,7 @@ func ParseDMARCRecord(raw string) (DMARC, error) {
 	}
 
 	if d.Version == "" {
-		return DMARC{}, fmt.Errorf("missing version tag")
+		return DMARC{}, fmt.Errorf("missing version tag in DMARC record")
 	}
 
 	return d, nil
