@@ -3,6 +3,7 @@ package dmarc
 import (
 	"errors"
 	"fmt"
+	"net"
 	"reflect"
 	"testing"
 )
@@ -77,9 +78,10 @@ func TestParseDMARCRecord(t *testing.T) {
 
 func TestLookupDMARCRecord(t *testing.T) {
 	testCases := []struct {
-		domain  string
-		want    DMARC
-		wantErr error
+		domain   string
+		want     DMARC
+		wantErr  error
+		resolver TXTLookupFunc
 	}{
 		{
 			domain: "masa23.jp",
@@ -87,7 +89,14 @@ func TestLookupDMARCRecord(t *testing.T) {
 				Version:            "DMARC1",
 				Policy:             "reject",
 				AggregateReportURI: []string{"mailto:abuse@masa23.jp"},
-				raw:                "v=DMARC1; p=reject; rua=mailto:abuse@masa23.jp;",
+				ForensicReportURI:  []string{"mailto:abuse@masa23.jp"},
+				raw:                "v=DMARC1; p=reject; rua=mailto:abuse@masa23.jp; ruf=mailto:abuse@masa23.jp;",
+			},
+			resolver: func(name string) ([]string, error) {
+				if name == "_dmarc.masa23.jp" {
+					return []string{"v=DMARC1; p=reject; rua=mailto:abuse@masa23.jp; ruf=mailto:abuse@masa23.jp;"}, nil
+				}
+				return nil, &net.DNSError{IsNotFound: true}
 			},
 			wantErr: nil,
 		},
@@ -109,9 +118,10 @@ func TestLookupDMARCRecord(t *testing.T) {
 
 func TestLookupDMARCRecordWithSubdomainFallback(t *testing.T) {
 	testCases := []struct {
-		domain  string
-		want    DMARC
-		wantErr error
+		domain   string
+		want     DMARC
+		wantErr  error
+		resolver TXTLookupFunc
 	}{
 		{
 			domain: "masa23.jp",
@@ -119,7 +129,14 @@ func TestLookupDMARCRecordWithSubdomainFallback(t *testing.T) {
 				Version:            "DMARC1",
 				Policy:             "reject",
 				AggregateReportURI: []string{"mailto:abuse@masa23.jp"},
-				raw:                "v=DMARC1; p=reject; rua=mailto:abuse@masa23.jp;",
+				ForensicReportURI:  []string{"mailto:abuse@masa23.jp"},
+				raw:                "v=DMARC1; p=reject; rua=mailto:abuse@masa23.jp; ruf=mailto:abuse@masa23.jp;",
+			},
+			resolver: func(name string) ([]string, error) {
+				if name == "_dmarc.masa23.jp" {
+					return []string{"v=DMARC1; p=reject; rua=mailto:abuse@masa23.jp; ruf=mailto:abuse@masa23.jp;"}, nil
+				}
+				return nil, &net.DNSError{IsNotFound: true}
 			},
 			wantErr: nil,
 		},
@@ -142,7 +159,7 @@ func TestLookupDMARCRecordWithSubdomainFallback(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(fmt.Sprintf("LookupWithFallback: %s", tc.domain), func(t *testing.T) {
-			got, err := LookupDMARCWithSubdomainFallback(tc.domain, nil)
+			got, err := LookupDMARCWithSubdomainFallback(tc.domain, tc.resolver)
 			assertErrorEqual(t, err, tc.wantErr)
 			assertDMARCEqual(t, got, tc.want)
 		})
