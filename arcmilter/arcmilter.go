@@ -14,9 +14,9 @@ import (
 	"github.com/d--j/go-milter"
 	"github.com/k0kubun/pp/v3"
 	"github.com/masa23/arcmilter/config"
-	"github.com/masa23/arcmilter/mmauth"
-	"github.com/masa23/arcmilter/mmauth/arc"
-	"github.com/masa23/arcmilter/mmauth/dkim"
+	"github.com/masa23/mmauth"
+	"github.com/masa23/mmauth/arc"
+	"github.com/masa23/mmauth/dkim"
 	"github.com/wttw/spf"
 )
 

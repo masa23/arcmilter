@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/d--j/go-milter"
-	"github.com/masa23/arcmilter/mmauth/arc"
-	"github.com/masa23/arcmilter/mmauth/dkim"
+	"github.com/masa23/mmauth/arc"
+	"github.com/masa23/mmauth/dkim"
 )
 
 // Testの初期化
