@@ -5,6 +5,7 @@ go 1.19
 require (
 	github.com/d--j/go-milter v0.8.4
 	github.com/k0kubun/pp/v3 v3.2.0
+	github.com/masa23/mmauth v1.0.0
 	github.com/wttw/spf v0.0.0-20240102203649-7f5e2492fc2a
 	gopkg.in/yaml.v3 v3.0.1
 )
