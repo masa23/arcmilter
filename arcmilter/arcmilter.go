@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"crypto/ed25519"
 	"crypto/rsa"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -17,6 +18,7 @@ import (
 	"github.com/masa23/mmauth"
 	"github.com/masa23/mmauth/arc"
 	"github.com/masa23/mmauth/dkim"
+	"github.com/masa23/mmauth/dmarc"
 	"github.com/wttw/spf"
 )
 
@@ -30,6 +32,7 @@ type Session struct {
 	milter.NoOpMilter
 	isARCSign    bool
 	isDKIMSign   bool
+	isLocal      bool
 	helo         string
 	remoteAddr   net.IP
 	rcptToDomain string
@@ -39,6 +42,19 @@ type Session struct {
 	conf         *config.Config
 	mmauth       *mmauth.MMAuth
 	authn        string
+}
+
+func isLocalAddr(addr net.IP) bool {
+	if addr == nil {
+		return false
+	}
+	if addr.IsLoopback() {
+		return true
+	}
+	if addr.IsLinkLocalUnicast() {
+		return true
+	}
+	return false
 }
 
 func (a *ARCMilter) Serve(l net.Listener, conf *config.Config) error {
@@ -79,6 +95,10 @@ func (s *Session) Connect(host string, family string, port uint16, addr string, 
 	debugLog("Connect: %s", addr)
 	if ip := net.ParseIP(addr); ip != nil {
 		s.remoteAddr = ip
+	}
+	if isLocalAddr(s.remoteAddr) {
+		s.isLocal = true
+		debugLog("isLocalAddr: %s", s.remoteAddr)
 	}
 	return milter.RespContinue, nil
 }
@@ -332,6 +352,72 @@ func ARCSign(s *Session, m *milter.Modifier) {
 	}
 }
 
+type result struct {
+	spf   string
+	dkim  dkim.VerifyStatus
+	arc   arc.VerifyStatus
+	dmarc string
+}
+
+func checkDMARC(s *Session, m *milter.Modifier) *milter.Response {
+	if s.mmauth == nil {
+		return nil
+	}
+
+	// ローカルアドレスまたはSMTP認証済みの場合はDMARCチェックを行わない
+	if s.isLocal || s.authn != "" {
+		debugLog("checkDMARC skipped: isLocal=%v authn=%s", s.isLocal, s.authn)
+		return nil
+	}
+
+	var res result
+
+	dmrec, err := dmarc.LookupRecordWithSubdomainFallback(s.fromDomain)
+	if errors.Is(err, dmarc.ErrNoRecordFound) {
+		log.Printf("dmarc.LookupRecordWithSubdomainFallback: domain=%s err=%v", s.fromDomain, err)
+		res.dmarc = "none"
+	}
+	if err != nil {
+		log.Printf("dmarc.LookupRecordWithSubdomainFallback: domain=%s err=%v", s.fromDomain, err)
+		res.dmarc = "tmperr"
+	}
+
+	if dmrec.Policy == dmarc.PolicyNone {
+		res.dmarc = "none"
+		log.Printf("DMARC policy is none")
+	}
+
+	// SPF Check
+	if s.remoteAddr != nil {
+		r, _ := spf.Check(context.Background(), s.remoteAddr, s.mailFrom, s.helo)
+		res.spf = r.String()
+	}
+
+	// DKIM
+	ad := s.mmauth.AuthenticationHeaders.DKIMSignatures
+	for _, d := range *ad {
+		if d.Domain == s.fromDomain {
+			res.dkim = d.VerifyResult.Status()
+		} else {
+			res.dkim = "none"
+		}
+	}
+	// ARC
+	res.arc = s.mmauth.AuthenticationHeaders.ARCSignatures.GetVerifyResult()
+
+	if res.dkim == dkim.VerifyStatusPass || res.spf == "pass" || res.arc == arc.VerifyStatusPass {
+		res.dmarc = "pass"
+	} else {
+		res.dmarc = "fail"
+	}
+
+	if dmrec.Policy == dmarc.PolicyReject && res.dmarc == "fail" {
+		log.Printf("DMARC policy is reject: domain=%s policy=%s result=%s resp=%v dmarc=%v", s.fromDomain, dmrec.Policy, res.dmarc, res, dmrec)
+		return milter.RespReject
+	}
+	return nil
+}
+
 func (s *Session) EndOfMessage(m *milter.Modifier) (*milter.Response, error) {
 	debugLog("EndOfMessage")
 	if s.mmauth == nil {
@@ -344,6 +430,13 @@ func (s *Session) EndOfMessage(m *milter.Modifier) (*milter.Response, error) {
 
 	// Verify
 	s.mmauth.Verify()
+
+	// check
+	resp := checkDMARC(s, m)
+	if resp != nil {
+		log.Printf("DMARC check: %s", resp)
+		return resp, nil
+	}
 
 	// DKIM署名
 	DKIMSign(s, m)
