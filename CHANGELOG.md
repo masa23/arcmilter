@@ -1,5 +1,7 @@
 # Changelog
 
+## [v0.0.22](https://github.com/masa23/arcmilter/compare/v0.0.21...v0.0.22) - 2025-09-30
+
 ## [v0.0.21](https://github.com/masa23/arcmilter/compare/v0.0.20...v0.0.21) - 2025-09-30
 - mmauth v1.0.3 update by @masa23 in https://github.com/masa23/arcmilter/pull/37
 - tagprに対応 by @masa23 in https://github.com/masa23/arcmilter/pull/38
