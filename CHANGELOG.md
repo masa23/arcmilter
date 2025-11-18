@@ -1,5 +1,8 @@
 # Changelog
 
+## [v0.0.23](https://github.com/masa23/arcmilter/compare/v0.0.22...v0.0.23) - 2025-11-18
+- mmauth update by @masa23 in https://github.com/masa23/arcmilter/pull/43
+
 ## [v0.0.22](https://github.com/masa23/arcmilter/compare/v0.0.21...v0.0.22) - 2025-09-30
 
 ## [v0.0.21](https://github.com/masa23/arcmilter/compare/v0.0.20...v0.0.21) - 2025-09-30
