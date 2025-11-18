@@ -7,8 +7,8 @@ github.com/emersion/go-textwrapper v0.0.0-20200911093747-65d896831594/go.mod h1:
 github.com/k0kubun/pp/v3 v3.2.0 h1:h33hNTZ9nVFNP3u2Fsgz8JXiF5JINoZfFq4SvKJwNcs=
 github.com/k0kubun/pp/v3 v3.2.0/go.mod h1:ODtJQbQcIRfAD3N+theGCV1m/CBxweERz2dapdz1EwA=
 github.com/logrusorgru/aurora v0.0.0-20200102142835-e9ef32dff381/go.mod h1:7rIyQOR62GCctdiQpZ/zOJlFyk6y+94wXzv6RNZgaR4=
-github.com/masa23/mmauth v1.0.3 h1:O0rN7VYj2CSR+zlmINO/lNLDaMrEEWUGI6bh0EgWvvo=
-github.com/masa23/mmauth v1.0.3/go.mod h1:yKrJu+hRYhv+JZbM6aLgIsZLlP2PTFKMYi0B+KUZP8c=
+github.com/masa23/mmauth v1.0.5 h1:jq/QVstD/IW/9QCr4ZQso5mvNRqCGQUn7cPdkqpGLFE=
+github.com/masa23/mmauth v1.0.5/go.mod h1:yKrJu+hRYhv+JZbM6aLgIsZLlP2PTFKMYi0B+KUZP8c=
 github.com/mattn/go-colorable v0.1.6/go.mod h1:u6P/XSegPjTcexA+o6vUJrdnUu04hMope9wVRipJSqc=
 github.com/mattn/go-colorable v0.1.13 h1:fFA4WZxdEF4tXPZVKMLwD8oUnCTTo08duU7wxecdEvA=
 github.com/mattn/go-colorable v0.1.13/go.mod h1:7S9/ev0klgBDR4GtXTXX8a3vIGJpMovkB8vQcUbaXHg=
