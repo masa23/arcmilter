@@ -266,7 +266,7 @@ func ARCSign(s *Session, m *milter.Modifier) {
 			),
 		}
 
-		if err := signature.Sign(mmauth.ExtractHeadersARC(s.mmauth.Headers, s.conf.ARCSignHeaders),
+		if err := signature.Sign(mmauth.ExtractHeadersDKIM(s.mmauth.Headers, s.conf.ARCSignHeaders),
 			domain.PrivateKeySigner); err != nil {
 			log.Printf("signature.Sign: %v", err)
 			return
