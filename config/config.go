@@ -368,8 +368,8 @@ func matchDomain(pattern string, domain string) bool {
 func expandDomains(domains map[string]Domain) map[string]Domain {
 	result := make(map[string]Domain)
 
+	// 第一フェーズ: list構文のみを展開
 	for domainKey, domainConf := range domains {
-		// 簡略構文チェック "list:example.com,*.example.com"
 		if strings.HasPrefix(domainKey, "list:") {
 			domainList := strings.Split(domainKey[5:], ",") // "list:"の5文字をスキップ
 			for _, d := range domainList {
@@ -377,14 +377,17 @@ func expandDomains(domains map[string]Domain) map[string]Domain {
 				if d == "" {
 					continue
 				}
-				copy := domainConf
-				copy.Domain = d
-				copy.Pattern = d
-				// 重複している場合は後の設定で上書き
-				result[d] = copy
+				domainCopy := domainConf
+				domainCopy.Domain = d
+				domainCopy.Pattern = d
+				result[d] = domainCopy
 			}
-		} else {
-			// 通常の構造
+		}
+	}
+
+	// 第二フェーズ: 明示的なキーを適用（list構文の設定を上書き）
+	for domainKey, domainConf := range domains {
+		if !strings.HasPrefix(domainKey, "list:") {
 			domainConf.Domain = domainKey
 			domainConf.Pattern = domainKey
 			result[domainKey] = domainConf
