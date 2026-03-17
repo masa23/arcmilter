@@ -1,5 +1,8 @@
 # Changelog
 
+## [v0.0.25](https://github.com/masa23/arcmilter/compare/v0.0.24...v0.0.25) - 2026-03-17
+- update mmauth 1.0.7 by @masa23 in https://github.com/masa23/arcmilter/pull/48
+
 ## [v0.0.24](https://github.com/masa23/arcmilter/compare/v0.0.23...v0.0.24) - 2026-01-23
 - Bump golang.org/x/crypto from 0.37.0 to 0.45.0 in the go_modules group across 1 directory by @dependabot[bot] in https://github.com/masa23/arcmilter/pull/45
 - Version UP package mmauth 1.0.6 by @masa23 in https://github.com/masa23/arcmilter/pull/47
