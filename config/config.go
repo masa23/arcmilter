@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/user"
 	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -61,8 +62,9 @@ type Domain struct {
 	Selector               string `yaml:"Selector"`
 	ARCSelector            string `yaml:"ARCSelector"`
 	Domain                 string
-	DKIM                   bool `yaml:"DKIM"`
-	ARC                    bool `yaml:"ARC"`
+	Pattern                string // Original pattern from config (e.g., "*.example.com")
+	DKIM                   bool   `yaml:"DKIM"`
+	ARC                    bool   `yaml:"ARC"`
 }
 
 func getUid(userStr string) (int, error) {
@@ -199,6 +201,9 @@ func Load(path string) (*Config, error) {
 	if len(config.Domains) == 0 {
 		return nil, errors.New("domains is not set")
 	}
+	// 簡略構文を展開
+	config.Domains = expandDomains(config.Domains)
+
 	// Domainsを読み込む
 	for domain, value := range config.Domains {
 		// PrivateKeyを読み込む
@@ -275,12 +280,16 @@ func Load(path string) (*Config, error) {
 			value.ARCSelector = value.Selector
 		}
 
+		// PatternはexpandDomainsで既に設定されている
+		if value.Pattern == "" {
+			value.Pattern = domain
+		}
+		// DomainはexpandDomainsで既に設定されているが、念のため再設定
 		value.Domain = domain
+
 		config.Domains[domain] = value
 
 	}
-
-	// UserをUIDに変換
 	uid, err := getUid(config.User)
 	if err != nil {
 		return nil, err
@@ -318,4 +327,116 @@ func (c *Config) IsMyNetwork(ip net.IP) bool {
 		}
 	}
 	return false
+}
+
+// parseDomainPattern はドメインパターンを解析する
+// "example.com" → {isWildcard: false, hostPart: "example.com"}
+// "*.example.com" → {isWildcard: true, hostPart: "example.com"}
+// "*" → {isWildcard: true, hostPart: ""}
+func parseDomainPattern(pattern string) (isWildcard bool, hostPart string) {
+	if strings.HasPrefix(pattern, "*.") {
+		isWildcard = true
+		hostPart = pattern[2:] // Remove "*."
+	} else if pattern == "*" {
+		isWildcard = true
+		hostPart = ""
+	} else {
+		isWildcard = false
+		hostPart = pattern
+	}
+	return
+}
+
+// matchDomain はドメインパターンが対象ドメインにマッチするか判定する
+func matchDomain(pattern string, domain string) bool {
+	isWildcard, hostPart := parseDomainPattern(pattern)
+
+	if !isWildcard {
+		return pattern == domain
+	}
+
+	if pattern == "*" {
+		return true
+	}
+
+	// ワイルドカード: *.example.com → sub.example.com をマッチ
+	// また、example.com 自体もマッチさせる（edge case）
+	return strings.HasSuffix(domain, "."+hostPart) || domain == hostPart
+}
+
+// expandDomains は簡略構文 "list:domain1,domain2,*.domain3" を展開する
+func expandDomains(domains map[string]Domain) map[string]Domain {
+	result := make(map[string]Domain)
+
+	// 第一フェーズ: list構文のみを展開
+	for domainKey, domainConf := range domains {
+		if strings.HasPrefix(domainKey, "list:") {
+			domainList := strings.Split(domainKey[5:], ",") // "list:"の5文字をスキップ
+			for _, d := range domainList {
+				d = strings.TrimSpace(d)
+				if d == "" {
+					continue
+				}
+				domainCopy := domainConf
+				domainCopy.Domain = d
+				domainCopy.Pattern = d
+				result[d] = domainCopy
+			}
+		}
+	}
+
+	// 第二フェーズ: 明示的なキーを適用（list構文の設定を上書き）
+	for domainKey, domainConf := range domains {
+		if !strings.HasPrefix(domainKey, "list:") {
+			domainConf.Domain = domainKey
+			domainConf.Pattern = domainKey
+			result[domainKey] = domainConf
+		}
+	}
+
+	return result
+}
+
+// GetMatchingDomain は対象ドメインに最もマッチするドメイン設定を返す
+// 優先順位: 完全一致 → ワイルドカード一致（より限定的なもの優先） → デフォルト(*)
+// 返されるDomainのDomainフィールドは、マッチした実際のドメイン名に設定される
+func (c *Config) GetMatchingDomain(domain string) (*Domain, bool) {
+	// 完全一致を優先
+	if d, ok := c.Domains[domain]; ok {
+		return &d, true
+	}
+
+	// ワイルドカード一致を検索（最も限定的なものを優先）
+	bestMatchKey := ""
+	bestMatchLen := 0
+
+	for pattern := range c.Domains {
+		if pattern == "*" {
+			continue // デフォルトは最後にチェック
+		}
+		if matchDomain(pattern, domain) {
+			_, hostPart := parseDomainPattern(pattern)
+			matchLen := len(hostPart)
+			// より長いホストパーツ（より限定的）を優先
+			if matchLen > bestMatchLen {
+				bestMatchKey = pattern
+				bestMatchLen = matchLen
+			}
+		}
+	}
+
+	if bestMatchKey != "" {
+		if d, ok := c.Domains[bestMatchKey]; ok {
+			d.Domain = domain // マッチした実際のドメイン名を設定
+			return &d, true
+		}
+	}
+
+	// デフォルト
+	if d, ok := c.Domains["*"]; ok {
+		d.Domain = domain // マッチした実際のドメイン名を設定
+		return &d, true
+	}
+
+	return nil, false
 }
