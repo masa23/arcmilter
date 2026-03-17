@@ -16,6 +16,7 @@ LogFile:
   Path: /var/log/arcmilter.log
   Mode: 0600
 Domains:
+  # 通常のドメイン指定（完全一致）
   "example.jp":
     HeaderCanonicalization: "relaxed"
     BodyCanonicalization: "relaxed"
@@ -31,6 +32,34 @@ Domains:
     PrivateKeyFile: "/etc/arcmilter/keys/example.com.key"
     DKIM: true
     ARC: true
+
+  # ワイルドカードパターン：*.example.com は example.com および sub.example.com にマッチ
+  # "example.com" は上記で定義済みなので、完全一致が優先されます
+  "*.example.net":
+    HeaderCanonicalization: "relaxed"
+    BodyCanonicalization: "relaxed"
+    Selector: "default"
+    PrivateKeyFile: "/etc/arcmilter/keys/example.net.key"
+    DKIM: true
+    ARC: true
+
+  # 複数ドメイン一覧表記：カンマ区切りで複数のドメイン・パターンを指定
+  "list:*.customer.com,*.customer.net,*.customer.org":
+    HeaderCanonicalization: "relaxed"
+    BodyCanonicalization: "relaxed"
+    Selector: "customer"
+    PrivateKeyFile: "/etc/arcmilter/keys/customer.key"
+    DKIM: true
+    ARC: true
+
+  # デフォルト設定：どのパターンにもマッチしないドメインはこれを使用
+  "*":
+    HeaderCanonicalization: "relaxed"
+    BodyCanonicalization: "relaxed"
+    Selector: "default"
+    PrivateKeyFile: "/etc/arcmilter/keys/default.key"
+    DKIM: true
+    ARC: false
 MyNetworks:
   - 127.0.0.0/8
   - ::1/128

@@ -73,6 +73,17 @@ I welcome feedback and pull requests.
   - 127.0.0.0/8
   - ::1/128
   Domains:
+    // Domain names can be specified using these pattern matching syntax:
+    //
+    // 1. Exact match: "example.jp" - Matches only this exact domain
+    // 2. Wildcard: "*.example.jp" - Matches example.jp and all its subdomains
+    // 3. Default: "*" - Used when no other pattern matches
+    //
+    // Matching priority: Exact match > Wildcard (more specific) > Default
+    //
+    // You can also specify multiple domains/patterns separated by commas:
+    // "list:example.com,sub.example.com,*.example.net"
+    //
     "example.jp": // Domain for DKIM signing in From field, and ARC signing in Rcpt-To field
       HeaderCanonicalization: "relaxed" // Header normalization method
       BodyCanonicalization: "relaxed"   // Body normalization method

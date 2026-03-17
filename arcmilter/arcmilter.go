@@ -110,7 +110,7 @@ func (s *Session) RcptTo(rcptTo string, esmtpArgs string, m *milter.Modifier) (*
 	}
 	s.rcptToDomain = rpctToDomain
 	// 署名の準備
-	if domain, ok := (s.conf.Domains)[rpctToDomain]; ok {
+	if domain, ok := s.conf.GetMatchingDomain(rpctToDomain); ok {
 		// 宛先が対象ドメインならARC署名を行う
 		s.isARCSign = true
 		s.mmauth.AddBodyHash(mmauth.BodyCanonicalizationAndAlgorithm{
@@ -179,7 +179,7 @@ func DKIMSign(s *Session, m *milter.Modifier) {
 	}
 
 	// 対応するドメインのキーがある場合はDKIM署名を行う
-	if domain, ok := (s.conf.Domains)[s.fromDomain]; ok && domain.DKIM {
+	if domain, ok := s.conf.GetMatchingDomain(s.fromDomain); ok && domain.DKIM {
 		bodyHash := s.mmauth.GetBodyHash(mmauth.BodyCanonicalizationAndAlgorithm{
 			Body:      mmauth.Canonicalization(domain.BodyCanonicalization),
 			Algorithm: domain.HashAlgo,
@@ -227,7 +227,7 @@ func ARCSign(s *Session, m *milter.Modifier) {
 		return
 	}
 
-	if domain, ok := (s.conf.Domains)[s.rcptToDomain]; ok && domain.ARC {
+	if domain, ok := s.conf.GetMatchingDomain(s.rcptToDomain); ok && domain.ARC {
 		if s.mmauth.AuthenticationHeaders == nil {
 			log.Printf("AuthenticationHeaders is nil")
 		}

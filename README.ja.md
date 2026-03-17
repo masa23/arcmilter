@@ -74,6 +74,17 @@ DKIM署名およびARCの署名を行うmilterです。
   - 127.0.0.0/8
   - ::1/128
   Domains:
+    // ドメイン名は以下のパターンマッチング構文で指定できます：
+    //
+    // 1. 完全一致: "example.jp" - 完全一致するドメインのみ
+    // 2. ワイルドカード: "*.example.jp" - example.jp およびそのサブドメインにマッチ
+    // 3. デフォルト: "*" - どのパターンにもマッチしない場合に使用
+    //
+    // マッチングの優先順位: 完全一致 > ワイルドカード（より具体的なもの） > デフォルト
+    //
+    // 複数のドメイン・パターンをカンマ区切りで一括指定することもできます：
+    // "list:example.com,sub.example.com,*.example.net"
+    //
     "example.jp": // DKIM署名するFromのドメイン、ARC署名するRcpt-Toのドメイン
       HeaderCanonicalization: "relaxed" // ヘッダの正規化方法
       BodyCanonicalization: "relaxed"   // ボディの正規化方法
