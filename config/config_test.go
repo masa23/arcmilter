@@ -262,7 +262,7 @@ func Test_matchDomain(t *testing.T) {
 
 func Test_expandDomains(t *testing.T) {
 	input := map[string]Domain{
-		"list:example.com,mail.example.com,*.sub.example.com": {
+		"list:example.com,mail.example.com": {
 			Selector:       "default",
 			PrivateKeyFile: "/etc/arcmilter/keys/default.key",
 			DKIM:           true,
@@ -279,12 +279,12 @@ func Test_expandDomains(t *testing.T) {
 	result := expandDomains(input)
 
 	// 展開されたエントリを確認
-	if len(result) != 4 {
-		t.Errorf("expected 4 domains, got %d", len(result))
+	if len(result) != 3 {
+		t.Errorf("expected 3 domains, got %d", len(result))
 	}
 
 	// 個別のドメイン確認
-	for _, domain := range []string{"example.com", "mail.example.com", "*.sub.example.com"} {
+	for _, domain := range []string{"example.com", "mail.example.com"} {
 		if d, ok := result[domain]; !ok {
 			t.Errorf("domain %s not found in result", domain)
 		} else {

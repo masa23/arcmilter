@@ -136,7 +136,7 @@ func (s *Session) Header(name, value string, m *milter.Modifier) (*milter.Respon
 		}
 		s.fromDomain = fromDomain
 
-		if domain, ok := (s.conf.Domains)[s.fromDomain]; ok {
+		if domain, ok := s.conf.GetMatchingDomain(s.fromDomain); ok && domain.DKIM {
 			// 送信元が対象ドメインなら正規化とハッシュアルゴリズムを設定
 			s.mmauth.AddBodyHash(mmauth.BodyCanonicalizationAndAlgorithm{
 				Body:      mmauth.Canonicalization(domain.BodyCanonicalization),
@@ -145,6 +145,8 @@ func (s *Session) Header(name, value string, m *milter.Modifier) (*milter.Respon
 			})
 			// DKIM署名を行う
 			s.isDKIMSign = true
+		} else {
+			s.isDKIMSign = false
 		}
 		return milter.RespContinue, nil
 	}

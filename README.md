@@ -59,8 +59,8 @@ I welcome feedback and pull requests.
   #  Network: unix
   #  Address: /var/run/arcmilter.sock
   #  Mode: 0600
-  #  Owner: postfix // Default: Execution user
-  #  Group: postfix // Default: Execution group
+  #  Owner: postfix # Default: Execution user
+  #  Group: postfix # Default: Execution group
   ControlSocketFile:
     Path: /var/run/arcmilterctl.sock
     Mode: 0600
@@ -73,25 +73,25 @@ I welcome feedback and pull requests.
   - 127.0.0.0/8
   - ::1/128
   Domains:
-    // Domain names can be specified using these pattern matching syntax:
-    //
-    // 1. Exact match: "example.jp" - Matches only this exact domain
-    // 2. Wildcard: "*.example.jp" - Matches example.jp and all its subdomains
-    // 3. Default: "*" - Used when no other pattern matches
-    //
-    // Matching priority: Exact match > Wildcard (more specific) > Default
-    //
-    // You can also specify multiple domains/patterns separated by commas:
-    // "list:example.com,sub.example.com,*.example.net"
-    //
-    "example.jp": // Domain for DKIM signing in From field, and ARC signing in Rcpt-To field
-      HeaderCanonicalization: "relaxed" // Header normalization method
-      BodyCanonicalization: "relaxed"   // Body normalization method
-      Selector: "default"               // Selector
-      PrivateKeyFile: "/etc/arcmilter/keys/example.jp.key" // Path to private key
-      DKIM: true  // Enable DKIM signing
-      ARC: true   // Enable ARC signing
-    "example.com": // You can configure multiple domains
+    # Domain names can be specified using these pattern matching syntax:
+    #
+    # 1. Exact match: "example.jp" - Matches only this exact domain
+    # 2. Wildcard: "*.example.jp" - Matches example.jp and all its subdomains
+    # 3. Default: "*" - Used when no other pattern matches
+    #
+    # Matching priority: Exact match > Wildcard (more specific) > Default
+    #
+    # You can also specify multiple domains/patterns separated by commas:
+    # "list:example.com,sub.example.com,*.example.net"
+    #
+    "example.jp": # Domain for DKIM signing in From field, and ARC signing in Rcpt-To field
+      HeaderCanonicalization: "relaxed" # Header normalization method
+      BodyCanonicalization: "relaxed"   # Body normalization method
+      Selector: "default"               # Selector
+      PrivateKeyFile: "/etc/arcmilter/keys/example.jp.key" # Path to private key
+      DKIM: true  # Enable DKIM signing
+      ARC: true   # Enable ARC signing
+    "example.com": # You can configure multiple domains
       HeaderBodyCanonicalization: "relaxed"
       BodyCanonicalization: "relaxed"
       Selector: "default"
@@ -99,15 +99,15 @@ I welcome feedback and pull requests.
       PrivateKeyFile: "/etc/arcmilter/keys/example.com.key"
       DKIM: true
       ARC: true
-  User: mail  // User to run the milter
-  Group: mail // Group to run the milter
-  ARCSignHeaders: // Headers to sign with ARC
+  User: mail  # User to run the milter
+  Group: mail # Group to run the milter
+  ARCSignHeaders: # Headers to sign with ARC
     - "DKIM-Signature"
     - "Date"
     - "From"
     - "To"
     - "Message-Id"
-  DKIMSignHeaders: // Headers to sign with DKIM
+  DKIMSignHeaders: # Headers to sign with DKIM
     - "Date"
     - "From"
     - "To"

@@ -60,8 +60,8 @@ DKIM署名およびARCの署名を行うmilterです。
   #  Network: unix
   #  Address: /var/run/arcmilter.sock
   #  Mode: 0600
-  #  Owner: postfix // デフォルト: 実行ユーザ
-  #  Group: postfix // デフォルト: 実行グループ
+  #  Owner: postfix # デフォルト: 実行ユーザ
+  #  Group: postfix # デフォルト: 実行グループ
   ControlSocketFile:
     Path: /var/run/arcmilterctl.sock
     Mode: 0600
@@ -74,25 +74,25 @@ DKIM署名およびARCの署名を行うmilterです。
   - 127.0.0.0/8
   - ::1/128
   Domains:
-    // ドメイン名は以下のパターンマッチング構文で指定できます：
-    //
-    // 1. 完全一致: "example.jp" - 完全一致するドメインのみ
-    // 2. ワイルドカード: "*.example.jp" - example.jp およびそのサブドメインにマッチ
-    // 3. デフォルト: "*" - どのパターンにもマッチしない場合に使用
-    //
-    // マッチングの優先順位: 完全一致 > ワイルドカード（より具体的なもの） > デフォルト
-    //
-    // 複数のドメイン・パターンをカンマ区切りで一括指定することもできます：
-    // "list:example.com,sub.example.com,*.example.net"
-    //
-    "example.jp": // DKIM署名するFromのドメイン、ARC署名するRcpt-Toのドメイン
-      HeaderCanonicalization: "relaxed" // ヘッダの正規化方法
-      BodyCanonicalization: "relaxed"   // ボディの正規化方法
-      Selector: "default"               // セレクタ
-      PrivateKeyFile: "/etc/arcmilter/keys/example.jp.key" // 秘密鍵のパス
-      DKIM: true  // DKIM署名を行うか
-      ARC: true   // ARC署名を行うか
-    "example.com": // 複数のドメインを設定可能
+    # ドメイン名は以下のパターンマッチング構文で指定できます：
+    #
+    # 1. 完全一致: "example.jp" - 完全一致するドメインのみ
+    # 2. ワイルドカード: "*.example.jp" - example.jp およびそのサブドメインにマッチ
+    # 3. デフォルト: "*" - どのパターンにもマッチしない場合に使用
+    #
+    # マッチングの優先順位: 完全一致 > ワイルドカード（より具体的なもの） > デフォルト
+    #
+    # 複数のドメイン・パターンをカンマ区切りで一括指定することもできます：
+    # "list:example.com,sub.example.com,*.example.net"
+    #
+    "example.jp": # DKIM署名するFromのドメイン、ARC署名するRcpt-Toのドメイン
+      HeaderCanonicalization: "relaxed" # ヘッダの正規化方法
+      BodyCanonicalization: "relaxed"   # ボディの正規化方法
+      Selector: "default"               # セレクタ
+      PrivateKeyFile: "/etc/arcmilter/keys/example.jp.key" # 秘密鍵のパス
+      DKIM: true  # DKIM署名を行うか
+      ARC: true   # ARC署名を行うか
+    "example.com": # 複数のドメインを設定可能
       HeaderBodyCanonicalization: "relaxed"
       BodyCanonicalization: "relaxed"
       Selector: "default"
@@ -100,15 +100,15 @@ DKIM署名およびARCの署名を行うmilterです。
       PrivateKeyFile: "/etc/arcmilter/keys/example.com.key"
       DKIM: true
       ARC: true
-  User: mail  // milterの子プロセス実行ユーザ    デフォルト: 実行ユーザ
-  Group: mail // milterの子プロセス実行グループ  デフォルト: 実行グループ
-  ARCSignHeaders: // ARC署名するヘッダ
+  User: mail  # milterの子プロセス実行ユーザ    デフォルト: 実行ユーザ
+  Group: mail # milterの子プロセス実行グループ  デフォルト: 実行グループ
+  ARCSignHeaders: # ARC署名するヘッダ
     - "DKIM-Signature"
     - "Date"
     - "From"
     - "To"
     - "Message-Id"
-  DKIMSignHeaders: // DKIM署名するヘッダ
+  DKIMSignHeaders: # DKIM署名するヘッダ
     - "Date"
     - "From"
     - "To"

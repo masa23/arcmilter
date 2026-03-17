@@ -364,15 +364,14 @@ func matchDomain(pattern string, domain string) bool {
 	return strings.HasSuffix(domain, "."+hostPart) || domain == hostPart
 }
 
-// expandDomains は簡略構文 "label:domain1,domain2,domain3" を展開する
+// expandDomains は簡略構文 "list:domain1,domain2,*.domain3" を展開する
 func expandDomains(domains map[string]Domain) map[string]Domain {
 	result := make(map[string]Domain)
 
 	for domainKey, domainConf := range domains {
 		// 簡略構文チェック "list:example.com,*.example.com"
-		if strings.Contains(domainKey, ":") {
-			parts := strings.SplitN(domainKey, ":", 2)
-			domainList := strings.Split(parts[1], ",")
+		if strings.HasPrefix(domainKey, "list:") {
+			domainList := strings.Split(domainKey[5:], ",") // "list:"の5文字をスキップ
 			for _, d := range domainList {
 				d = strings.TrimSpace(d)
 				if d == "" {
@@ -381,6 +380,7 @@ func expandDomains(domains map[string]Domain) map[string]Domain {
 				copy := domainConf
 				copy.Domain = d
 				copy.Pattern = d
+				// 重複している場合は後の設定で上書き
 				result[d] = copy
 			}
 		} else {
@@ -396,6 +396,7 @@ func expandDomains(domains map[string]Domain) map[string]Domain {
 
 // GetMatchingDomain は対象ドメインに最もマッチするドメイン設定を返す
 // 優先順位: 完全一致 → ワイルドカード一致（より限定的なもの優先） → デフォルト(*)
+// 返されるDomainのDomainフィールドは、マッチした実際のドメイン名に設定される
 func (c *Config) GetMatchingDomain(domain string) (*Domain, bool) {
 	// 完全一致を優先
 	if d, ok := c.Domains[domain]; ok {
@@ -403,10 +404,10 @@ func (c *Config) GetMatchingDomain(domain string) (*Domain, bool) {
 	}
 
 	// ワイルドカード一致を検索（最も限定的なものを優先）
-	var bestMatch *Domain
+	bestMatchKey := ""
 	bestMatchLen := 0
 
-	for pattern, d := range c.Domains {
+	for pattern := range c.Domains {
 		if pattern == "*" {
 			continue // デフォルトは最後にチェック
 		}
@@ -415,18 +416,22 @@ func (c *Config) GetMatchingDomain(domain string) (*Domain, bool) {
 			matchLen := len(hostPart)
 			// より長いホストパーツ（より限定的）を優先
 			if matchLen > bestMatchLen {
-				bestMatch = &d
+				bestMatchKey = pattern
 				bestMatchLen = matchLen
 			}
 		}
 	}
 
-	if bestMatch != nil {
-		return bestMatch, true
+	if bestMatchKey != "" {
+		if d, ok := c.Domains[bestMatchKey]; ok {
+			d.Domain = domain // マッチした実際のドメイン名を設定
+			return &d, true
+		}
 	}
 
 	// デフォルト
 	if d, ok := c.Domains["*"]; ok {
+		d.Domain = domain // マッチした実際のドメイン名を設定
 		return &d, true
 	}
 
