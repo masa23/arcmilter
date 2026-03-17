@@ -1,5 +1,8 @@
 # Changelog
 
+## [v0.0.26](https://github.com/masa23/arcmilter/compare/v0.0.25...v0.0.26) - 2026-03-17
+- 署名対象ドメインの柔軟性を向上 by @masa23 in https://github.com/masa23/arcmilter/pull/50
+
 ## [v0.0.25](https://github.com/masa23/arcmilter/compare/v0.0.24...v0.0.25) - 2026-03-17
 - update mmauth 1.0.7 by @masa23 in https://github.com/masa23/arcmilter/pull/48
 
