@@ -271,19 +271,7 @@ func ARCSign(s *Session, m *milter.Modifier) {
 			return
 		}
 
-		// DKIM
-		var results []string
-		ad := s.mmauth.AuthenticationHeaders.DKIMSignatures
-		for _, d := range *ad {
-			results = append(results, d.ResultString())
-		}
-
-		// ARC
-		aa := s.mmauth.AuthenticationHeaders.ARCSignatures
-		if aa != nil {
-			results = append(results, aa.GetVerifyResultString())
-		}
-
+		results := s.mmauth.GetAuthenticationHeader(s.remoteAddr, s.helo, s.mailFrom)
 		result := arc.ARCAuthenticationResults{
 			InstanceNumber: instanceNumber,
 			AuthServId:     s.rcptToDomain,
@@ -309,14 +297,8 @@ func ARCSign(s *Session, m *milter.Modifier) {
 			return
 		}
 
-		mres := s.mmauth.GetAuthenticationHeader(s.remoteAddr, s.helo, s.mailFrom)
-		mauthres := arc.ARCAuthenticationResults{
-			InstanceNumber: instanceNumber,
-			AuthServId:     s.rcptToDomain,
-			Results:        mres,
-		}
-		if err := m.InsertHeader(1, "ARC-Authentication-Results", mauthres.String()); err != nil {
-			log.Printf("ARC-Authentication-Results2 Insert Error: %v", err)
+		if err := m.InsertHeader(1, "ARC-Authentication-Results", result.String()); err != nil {
+			log.Printf("ARC-Authentication-Results Insert Error: %v", err)
 			return
 		}
 		if err := m.InsertHeader(1, "ARC-Message-Signature", signature.String()); err != nil {
