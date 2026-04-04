@@ -1,11 +1,9 @@
 package arcmilter
 
 import (
-	"context"
 	"crypto"
 	"crypto/ed25519"
 	"crypto/rsa"
-	"fmt"
 	"log"
 	"net"
 	"net/rpc"
@@ -17,7 +15,6 @@ import (
 	"github.com/masa23/mmauth"
 	"github.com/masa23/mmauth/arc"
 	"github.com/masa23/mmauth/dkim"
-	"github.com/wttw/spf"
 )
 
 var debug bool
@@ -274,26 +271,7 @@ func ARCSign(s *Session, m *milter.Modifier) {
 			return
 		}
 
-		// SPF Check
-		var results []string
-		if s.remoteAddr != nil {
-			res, _ := spf.Check(context.Background(), s.remoteAddr, s.mailFrom, s.helo)
-			results = append(results,
-				fmt.Sprintf("spf=%s smtp.mailfrom=%s smtp.helo=%s", res.String(), s.mailFrom, s.helo))
-		}
-
-		// DKIM
-		ad := s.mmauth.AuthenticationHeaders.DKIMSignatures
-		for _, d := range *ad {
-			results = append(results, d.ResultString())
-		}
-
-		// ARC
-		aa := s.mmauth.AuthenticationHeaders.ARCSignatures
-		if aa != nil {
-			results = append(results, aa.GetVerifyResultString())
-		}
-
+		results := s.mmauth.GetAuthenticationHeader(s.remoteAddr, s.helo, s.mailFrom)
 		result := arc.ARCAuthenticationResults{
 			InstanceNumber: instanceNumber,
 			AuthServId:     s.rcptToDomain,
