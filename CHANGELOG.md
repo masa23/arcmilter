@@ -1,5 +1,8 @@
 # Changelog
 
+## [v0.0.28](https://github.com/masa23/arcmilter/compare/v0.0.27...v0.0.28) - 2026-05-22
+- update auto restart by @masa23 in https://github.com/masa23/arcmilter/pull/55
+
 ## [v0.0.27](https://github.com/masa23/arcmilter/compare/v0.0.26...v0.0.27) - 2026-04-04
 - mmauth v1.0.8 にバージョンアップ by @masa23 in https://github.com/masa23/arcmilter/pull/52
 
