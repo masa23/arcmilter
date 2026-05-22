@@ -63,7 +63,7 @@ nfpms:
         type: config
       - dst: /etc/arcmilter/arcmilter.yaml
         src: cmd/arcmilter/arcmilter.yaml.sample
-        type: config
+        type: config|noreplace
       - dst: /usr/share/doc/arcmilter/CREDITS
         src: CREDITS
       - dst: /var/run/arcmilter
