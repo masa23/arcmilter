@@ -6,7 +6,6 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -16,6 +15,22 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+const (
+	DefaultHeaderCanonicalization = "relaxed"
+	DefaultBodyCanonicalization   = "relaxed"
+	DefaultHashAlgorithm          = "sha256"
+	DefaultSelector               = "default"
+)
+
+type ConfigError struct {
+	Field   string
+	Message string
+}
+
+func (e *ConfigError) Error() string {
+	return fmt.Sprintf("%s: %s", e.Field, e.Message)
+}
 
 type Config struct {
 	Path    string
@@ -68,7 +83,6 @@ type Domain struct {
 }
 
 func getUid(userStr string) (int, error) {
-	// 空の場合は自分自身のUIDを取得
 	var uidStr string
 	if userStr == "" {
 		u, err := user.Current()
@@ -91,7 +105,6 @@ func getUid(userStr string) (int, error) {
 }
 
 func getGid(groupStr string) (int, error) {
-	// 空の場合は自分自身のGIDを取得
 	var gidStr string
 	if groupStr == "" {
 		g, err := user.Current()
@@ -123,97 +136,203 @@ func checkMilterListenNetwork(network string) error {
 }
 
 func Load(path string) (*Config, error) {
+	config := createDefaultConfig()
+
 	buf, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 
-	// YAMLをパースする
-	var config Config
-	err = yaml.Unmarshal(buf, &config)
+	err = parseYAML(buf, config)
 	if err != nil {
 		return nil, err
 	}
 
-	// MilterListen Networkのバリデーション
-	if err := checkMilterListenNetwork(config.MilterListen.Network); err != nil {
+	err = validateConfig(config)
+	if err != nil {
 		return nil, err
 	}
 
-	// UnixSocketの場合はOwnerとGroupを設定
+	err = loadKeys(config)
+	if err != nil {
+		return nil, err
+	}
+
+	config.Path = path
+	return config, nil
+}
+
+func createDefaultConfig() *Config {
+	return &Config{
+		MilterListen: struct {
+			Network string `yaml:"Network"`
+			Address string `yaml:"Address"`
+			Mode    uint32 `yaml:"Mode"`
+			Owner   string `yaml:"Owner"`
+			Group   string `yaml:"Group"`
+			Uid     int
+			Gid     int
+		}{},
+		ControlSocketFile: struct {
+			Path string `yaml:"Path"`
+			Mode uint32 `yaml:"Mode"`
+		}{},
+		LogFile: struct {
+			Path string `yaml:"Path"`
+			Mode uint32 `yaml:"Mode"`
+		}{},
+		Domains:          make(map[string]Domain),
+		ParsedMyNetworks: make([]*net.IPNet, 0),
+		ARCSignHeaders:   make([]string, 0),
+		DKIMSignHeaders:  make([]string, 0),
+	}
+}
+
+func parseYAML(buf []byte, config *Config) error {
+	err := yaml.Unmarshal(buf, config)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateConfig(config *Config) error {
+	if err := checkMilterListenNetwork(config.MilterListen.Network); err != nil {
+		return err
+	}
+
 	if config.MilterListen.Network == "unix" {
 		uid, err := getUid(config.MilterListen.Owner)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		config.MilterListen.Uid = uid
 		gid, err := getGid(config.MilterListen.Group)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		config.MilterListen.Gid = gid
 	}
 
-	// MilterListen Addressのバリデーション
 	if config.MilterListen.Address == "" {
-		return nil, errors.New("MilterListen.Address is not set")
+		return &ConfigError{Field: "MilterListen.Address", Message: "is not set"}
 	}
 
-	// MilterListen Modeが設定されていなければ0600にする
 	if config.MilterListen.Mode == 0 {
 		config.MilterListen.Mode = 0600
 	}
 
-	// PidFile Pathが設定されているか確認
 	if config.PidFile.Path == "" {
-		return nil, errors.New("PIDFile is not set")
+		return &ConfigError{Field: "PIDFile.Path", Message: "is not set"}
 	}
 
-	// ControlSocketファイルのパスが設定されているか確認
 	if config.ControlSocketFile.Path == "" {
-		return nil, errors.New("ControlSocketFile.Path is not set")
+		return &ConfigError{Field: "ControlSocketFile.Path", Message: "is not set"}
 	}
 
-	// ControlSocket Modeが設定されていなければ0600にする
 	if config.ControlSocketFile.Mode == 0 {
 		config.ControlSocketFile.Mode = 0600
 	}
 
-	// LogFIle Modeが設定されていなければ0600にする
 	if config.LogFile.Mode == 0 {
 		config.LogFile.Mode = 0600
 	}
 
-	// MyNetworksが設定されていなければエラー
 	if len(config.MyNetworks) == 0 {
-		return nil, errors.New("MyNetwork is not set")
+		return &ConfigError{Field: "MyNetworks", Message: "is not set"}
 	}
-	// MyNetworksをパースする
+
 	for _, network := range config.MyNetworks {
 		_, ipNet, err := net.ParseCIDR(network)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		config.ParsedMyNetworks = append(config.ParsedMyNetworks, ipNet)
 	}
 
-	// Domainsが設定されていなければエラー
 	if len(config.Domains) == 0 {
-		return nil, errors.New("domains is not set")
+		return &ConfigError{Field: "Domains", Message: "is not set"}
 	}
-	// 簡略構文を展開
+
 	config.Domains = expandDomains(config.Domains)
 
-	// Domainsを読み込む
 	for domain, value := range config.Domains {
-		// PrivateKeyを読み込む
+		if value.HeaderCanonicalization == "" {
+			value.HeaderCanonicalization = DefaultHeaderCanonicalization
+		}
+		switch value.HeaderCanonicalization {
+		case "simple", "relaxed":
+		default:
+			return &ConfigError{Field: fmt.Sprintf("Domains[%s].HeaderCanonicalization", value.Domain), Message: fmt.Sprintf(`invalid value "%s"`, value.HeaderCanonicalization)}
+		}
+		if value.BodyCanonicalization == "" {
+			value.BodyCanonicalization = DefaultBodyCanonicalization
+		}
+		switch value.BodyCanonicalization {
+		case "simple", "relaxed":
+		default:
+			return &ConfigError{Field: fmt.Sprintf("Domains[%s].BodyCanonicalization", value.Domain), Message: fmt.Sprintf(`invalid value "%s"`, value.BodyCanonicalization)}
+		}
+
+		if value.HashAlgorithm == "" {
+			value.HashAlgorithm = DefaultHashAlgorithm
+		}
+		switch value.HashAlgorithm {
+		case "sha1":
+			value.HashAlgo = crypto.SHA1
+		case "sha256":
+			value.HashAlgo = crypto.SHA256
+		default:
+			return &ConfigError{Field: fmt.Sprintf("Domains[%s].HashAlgorithm", value.Domain), Message: fmt.Sprintf(`invalid value "%s"`, value.HashAlgorithm)}
+		}
+
+		if value.Selector == "" {
+			value.Selector = DefaultSelector
+		}
+		if value.ARCSelector == "" {
+			value.ARCSelector = value.Selector
+		}
+
+		if value.Pattern == "" {
+			value.Pattern = domain
+		}
+		value.Domain = domain
+
+		config.Domains[domain] = value
+	}
+
+	uid, err := getUid(config.User)
+	if err != nil {
+		return err
+	}
+	config.Uid = uid
+
+	gid, err := getGid(config.Group)
+	if err != nil {
+		return err
+	}
+	config.Gid = gid
+
+	if len(config.DKIMSignHeaders) == 0 {
+		return &ConfigError{Field: "DKIMSignHeaders", Message: "is not set"}
+	}
+
+	if len(config.ARCSignHeaders) == 0 {
+		return &ConfigError{Field: "ARCSignHeaders", Message: "is not set"}
+	}
+
+	return nil
+}
+
+func loadKeys(config *Config) error {
+	for domain, value := range config.Domains {
 		buf, err := os.ReadFile(value.PrivateKeyFile)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		block, _ := pem.Decode(buf)
 		if block == nil {
-			return nil, fmt.Errorf("failed to decode pem: %s", value.PrivateKeyFile)
+			return fmt.Errorf("failed to decode pem: %s", value.PrivateKeyFile)
 		}
 
 		var priv interface{}
@@ -221,15 +340,15 @@ func Load(path string) (*Config, error) {
 		case "RSA PRIVATE KEY":
 			priv, err = x509.ParsePKCS1PrivateKey(block.Bytes)
 			if err != nil {
-				return nil, err
+				return err
 			}
 		case "PRIVATE KEY":
 			priv, err = x509.ParsePKCS8PrivateKey(block.Bytes)
 			if err != nil {
-				return nil, err
+				return err
 			}
 		default:
-			return nil, fmt.Errorf("unknown key type: %s", block.Type)
+			return fmt.Errorf("unknown key type: %s", block.Type)
 		}
 
 		switch key := priv.(type) {
@@ -238,88 +357,16 @@ func Load(path string) (*Config, error) {
 		case ed25519.PrivateKey:
 			value.PrivateKeySigner = key
 		default:
-			return nil, fmt.Errorf("unknown key type: %T", key)
+			return fmt.Errorf("unknown key type: %T", key)
 		}
-
-		// HeaderCanonicalizationとBodyCanonicalizationのバリデーション
-		if value.HeaderCanonicalization == "" {
-			value.HeaderCanonicalization = "relaxed"
-		}
-		switch value.HeaderCanonicalization {
-		case "simple", "relaxed":
-		default:
-			return nil, fmt.Errorf("invalid HeaderCanonicalization: %s", value.HeaderCanonicalization)
-		}
-		if value.BodyCanonicalization == "" {
-			value.BodyCanonicalization = "relaxed"
-		}
-		switch value.BodyCanonicalization {
-		case "simple", "relaxed":
-		default:
-			return nil, fmt.Errorf("invalid BodyCanonicalization: %s", value.BodyCanonicalization)
-		}
-
-		// HashAlgoのバリデーション
-		if value.HashAlgorithm == "" {
-			value.HashAlgorithm = "sha256"
-		}
-		switch value.HashAlgorithm {
-		case "sha1":
-			value.HashAlgo = crypto.SHA1
-		case "sha256":
-			value.HashAlgo = crypto.SHA256
-		default:
-			return nil, fmt.Errorf("invalid HashAlgo: %s", value.HashAlgo)
-		}
-
-		// if Selector is empty, use "default"
-		if value.Selector == "" {
-			value.Selector = "default"
-		}
-		if value.ARCSelector == "" {
-			value.ARCSelector = value.Selector
-		}
-
-		// PatternはexpandDomainsで既に設定されている
-		if value.Pattern == "" {
-			value.Pattern = domain
-		}
-		// DomainはexpandDomainsで既に設定されているが、念のため再設定
-		value.Domain = domain
 
 		config.Domains[domain] = value
-
-	}
-	uid, err := getUid(config.User)
-	if err != nil {
-		return nil, err
-	}
-	config.Uid = uid
-
-	// GroupをGIDに変換
-	gid, err := getGid(config.Group)
-	if err != nil {
-		return nil, err
-	}
-	config.Gid = gid
-
-	// DKIMSignHeadersが設定されていなければエラー
-	if len(config.DKIMSignHeaders) == 0 {
-		return nil, errors.New("DKIMSignHeaders is not set")
 	}
 
-	// ARCSignHeadersが設定されていなければエラー
-	if len(config.ARCSignHeaders) == 0 {
-		return nil, errors.New("ARCSignHeaders is not set")
-	}
-
-	// HUP用にパスを保存
-	config.Path = path
-
-	return &config, nil
+	return nil
 }
 
-// IsMyNetwork は指定されたIPアドレスが自分のネットワークに含まれるかを返す
+// IsMyNetwork は指定された IP アドレスが自分のネットワークに含まれるかを返す
 func (c *Config) IsMyNetwork(ip net.IP) bool {
 	for _, ipNet := range c.ParsedMyNetworks {
 		if ipNet.Contains(ip) {
@@ -336,7 +383,7 @@ func (c *Config) IsMyNetwork(ip net.IP) bool {
 func parseDomainPattern(pattern string) (isWildcard bool, hostPart string) {
 	if strings.HasPrefix(pattern, "*.") {
 		isWildcard = true
-		hostPart = pattern[2:] // Remove "*."
+		hostPart = pattern[2:]
 	} else if pattern == "*" {
 		isWildcard = true
 		hostPart = ""
@@ -359,8 +406,6 @@ func matchDomain(pattern string, domain string) bool {
 		return true
 	}
 
-	// ワイルドカード: *.example.com → sub.example.com をマッチ
-	// また、example.com 自体もマッチさせる（edge case）
 	return strings.HasSuffix(domain, "."+hostPart) || domain == hostPart
 }
 
@@ -368,10 +413,9 @@ func matchDomain(pattern string, domain string) bool {
 func expandDomains(domains map[string]Domain) map[string]Domain {
 	result := make(map[string]Domain)
 
-	// 第一フェーズ: list構文のみを展開
 	for domainKey, domainConf := range domains {
 		if strings.HasPrefix(domainKey, "list:") {
-			domainList := strings.Split(domainKey[5:], ",") // "list:"の5文字をスキップ
+			domainList := strings.Split(domainKey[5:], ",")
 			for _, d := range domainList {
 				d = strings.TrimSpace(d)
 				if d == "" {
@@ -385,7 +429,6 @@ func expandDomains(domains map[string]Domain) map[string]Domain {
 		}
 	}
 
-	// 第二フェーズ: 明示的なキーを適用（list構文の設定を上書き）
 	for domainKey, domainConf := range domains {
 		if !strings.HasPrefix(domainKey, "list:") {
 			domainConf.Domain = domainKey
@@ -398,26 +441,23 @@ func expandDomains(domains map[string]Domain) map[string]Domain {
 }
 
 // GetMatchingDomain は対象ドメインに最もマッチするドメイン設定を返す
-// 優先順位: 完全一致 → ワイルドカード一致（より限定的なもの優先） → デフォルト(*)
-// 返されるDomainのDomainフィールドは、マッチした実際のドメイン名に設定される
+// 優先順位：完全一致 → ワイルドカード一致（より限定的なもの優先） → デフォルト(*)
+// 返される Domain の Domain フィールドは、マッチした実際のドメイン名に設定される
 func (c *Config) GetMatchingDomain(domain string) (*Domain, bool) {
-	// 完全一致を優先
 	if d, ok := c.Domains[domain]; ok {
 		return &d, true
 	}
 
-	// ワイルドカード一致を検索（最も限定的なものを優先）
 	bestMatchKey := ""
 	bestMatchLen := 0
 
 	for pattern := range c.Domains {
 		if pattern == "*" {
-			continue // デフォルトは最後にチェック
+			continue
 		}
 		if matchDomain(pattern, domain) {
 			_, hostPart := parseDomainPattern(pattern)
 			matchLen := len(hostPart)
-			// より長いホストパーツ（より限定的）を優先
 			if matchLen > bestMatchLen {
 				bestMatchKey = pattern
 				bestMatchLen = matchLen
@@ -427,14 +467,13 @@ func (c *Config) GetMatchingDomain(domain string) (*Domain, bool) {
 
 	if bestMatchKey != "" {
 		if d, ok := c.Domains[bestMatchKey]; ok {
-			d.Domain = domain // マッチした実際のドメイン名を設定
+			d.Domain = domain
 			return &d, true
 		}
 	}
 
-	// デフォルト
 	if d, ok := c.Domains["*"]; ok {
-		d.Domain = domain // マッチした実際のドメイン名を設定
+		d.Domain = domain
 		return &d, true
 	}
 
