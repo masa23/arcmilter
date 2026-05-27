@@ -4,6 +4,7 @@ import (
 	"crypto"
 	"crypto/ed25519"
 	"crypto/rsa"
+	"fmt"
 	"log"
 	"net"
 	"net/rpc"
@@ -66,14 +67,18 @@ func (a *ARCMilter) SetDebug(dbg bool) {
 	debug = dbg
 }
 
-func debugLog(format string, v ...interface{}) {
+func (s *Session) logError(format string, v ...interface{}) {
+	log.Printf("arcmilter: "+format, v...)
+}
+
+func (s *Session) debugLog(format string, v ...interface{}) {
 	if debug {
-		log.Printf(format, v...)
+		log.Printf("arcmilter: "+format, v...)
 	}
 }
 
 func (s *Session) Connect(host string, family string, port uint16, addr string, m *milter.Modifier) (*milter.Response, error) {
-	debugLog("Connect: %s", addr)
+	s.debugLog("Connect: %s", addr)
 	if ip := net.ParseIP(addr); ip != nil {
 		s.remoteAddr = ip
 	}
@@ -81,7 +86,7 @@ func (s *Session) Connect(host string, family string, port uint16, addr string, 
 }
 
 func (s *Session) Helo(name string, m *milter.Modifier) (*milter.Response, error) {
-	debugLog("Helo: %s", name)
+	s.debugLog("Helo: %s", name)
 	s.helo = name
 	return milter.RespContinue, nil
 }
@@ -89,81 +94,99 @@ func (s *Session) Helo(name string, m *milter.Modifier) (*milter.Response, error
 func (s *Session) MailFrom(from string, esmtpArgs string, m *milter.Modifier) (*milter.Response, error) {
 	s.authn = m.Macros.Get(milter.MacroAuthAuthen)
 	s.mailFrom = from
-	debugLog("MailFrom: %s", from)
+	s.debugLog("MailFrom: %s", from)
 	return milter.RespContinue, nil
 }
 
 func (s *Session) RcptTo(rcptTo string, esmtpArgs string, m *milter.Modifier) (*milter.Response, error) {
-	debugLog("RcptTo: %s", rcptTo)
+	s.debugLog("RcptTo: %s", rcptTo)
 	s.mmauth = mmauth.NewMMAuth()
-	// SMTP認証済みもしくはIPアドレスがMyNetworksに含まれている場合はARC署名を行わない
+
+	// SMTP 認証済みもしくは IP アドレスが MyNetworks に含まれている場合は署名を行わない
 	if s.authn != "" || s.conf.IsMyNetwork(s.remoteAddr) {
 		return milter.RespContinue, nil
 	}
+
 	rpctToDomain, err := mmauth.ParseAddressDomain(rcptTo)
 	if err != nil {
-		log.Printf("util.ParseAddressDomain: %v", err)
+		s.logError("util.ParseAddressDomain: %v", err)
 		return milter.RespContinue, nil
 	}
 	s.rcptToDomain = rpctToDomain
-	// 署名の準備
+
+	// 宛先が対象ドメインなら ARC 署名と BodyHash を設定
 	if domain, ok := s.conf.GetMatchingDomain(rpctToDomain); ok {
-		// 宛先が対象ドメインならARC署名を行う
 		s.isARCSign = true
-		s.mmauth.AddBodyHash(mmauth.BodyCanonicalizationAndAlgorithm{
-			Body:      mmauth.Canonicalization(domain.BodyCanonicalization),
-			Algorithm: domain.HashAlgo,
-			Limit:     0,
-		})
+		s.mmauth.AddBodyHash(
+			createBodyHashConfig(domain.BodyCanonicalization, domain.HashAlgo, 0),
+		)
 		return milter.RespContinue, nil
 	}
+
 	return milter.RespContinue, nil
 }
 
 func (s *Session) Header(name, value string, m *milter.Modifier) (*milter.Response, error) {
 	s.mmauth.Write([]byte(name + ": " + value + "\r\n"))
-	switch strings.ToLower(name) {
-	case "from":
-		s.from = value
-		fromDomain, err := mmauth.ParseAddressDomain(value)
-		if err != nil {
-			log.Printf("util.ParseAddressDomain: %v", err)
-			s.isDKIMSign = false
-			return milter.RespContinue, nil
-		}
-		s.fromDomain = fromDomain
 
-		if domain, ok := s.conf.GetMatchingDomain(s.fromDomain); ok && domain.DKIM {
-			// 送信元が対象ドメインなら正規化とハッシュアルゴリズムを設定
-			s.mmauth.AddBodyHash(mmauth.BodyCanonicalizationAndAlgorithm{
-				Body:      mmauth.Canonicalization(domain.BodyCanonicalization),
-				Algorithm: domain.HashAlgo,
-				Limit:     0,
-			})
-			// DKIM署名を行う
-			s.isDKIMSign = true
-		} else {
-			s.isDKIMSign = false
-		}
+	if strings.ToLower(name) != "from" {
 		return milter.RespContinue, nil
+	}
+
+	s.from = value
+	fromDomain, err := mmauth.ParseAddressDomain(value)
+	if err != nil {
+		s.logError("util.ParseAddressDomain: %v", err)
+		s.isDKIMSign = false
+		return milter.RespContinue, nil
+	}
+	s.fromDomain = fromDomain
+
+	// 送信元が対象ドメインなら DKIM 署名設定
+	if domain, ok := s.conf.GetMatchingDomain(s.fromDomain); ok && domain.DKIM {
+		s.mmauth.AddBodyHash(createBodyHashConfig(domain.BodyCanonicalization, domain.HashAlgo, 0))
+		s.isDKIMSign = true
+	} else {
+		s.isDKIMSign = false
 	}
 
 	return milter.RespContinue, nil
 }
 
 func (s *Session) Headers(m *milter.Modifier) (*milter.Response, error) {
-	debugLog("Headers")
+	s.debugLog("Headers")
 	if _, err := s.mmauth.Write([]byte("\r\n")); err != nil {
-		log.Printf("s.mmauth.Write: %v", err)
+		s.logError("s.mmauth.Write: %v", err)
 	}
 	return milter.RespContinue, nil
 }
 
 func (s *Session) BodyChunk(chunk []byte, m *milter.Modifier) (*milter.Response, error) {
 	if _, err := s.mmauth.Write(chunk); err != nil {
-		log.Printf("s.mmauth.Write: %v", err)
+		s.logError("s.mmauth.Write: %v", err)
 	}
 	return milter.RespContinue, nil
+}
+
+// getKeyTypeAlgo は公開鍵のタイプから DKIM 署名アルゴリズムを判定する
+func getKeyTypeAlgo(pub interface{}) (dkim.SignatureAlgorithm, error) {
+	switch pub.(type) {
+	case *rsa.PublicKey:
+		return dkim.SignatureAlgorithmRSA_SHA256, nil
+	case ed25519.PublicKey:
+		return dkim.SignatureAlgorithmED25519_SHA256, nil
+	default:
+		return "", fmt.Errorf("unknown key type: %T", pub)
+	}
+}
+
+// createBodyHashConfig は BodyHash の設定用構造体を生成する
+func createBodyHashConfig(canonicalization string, hashAlgo crypto.Hash, limit int64) mmauth.BodyCanonicalizationAndAlgorithm {
+	return mmauth.BodyCanonicalizationAndAlgorithm{
+		Body:      mmauth.Canonicalization(canonicalization),
+		Algorithm: hashAlgo,
+		Limit:     limit,
+	}
 }
 
 func DKIMSign(s *Session, m *milter.Modifier) {
@@ -172,31 +195,26 @@ func DKIMSign(s *Session, m *milter.Modifier) {
 	}
 
 	if h := mmauth.ExtractHeadersDKIM(s.mmauth.Headers, []string{"DKIM-Signature"}); len(h) > 0 {
-		// すでにDKIM署名がある場合はDKIM署名しない
-		log.Print("DKIM-Signature found Skip")
+		// すでに DKIM 署名がある場合は DKIM 署名しない
+		s.logError("DKIM-Signature found Skip")
 		return
 	}
 
-	// 対応するドメインのキーがある場合はDKIM署名を行う
+	// 対応するドメインのキーがある場合は DKIM 署名を行う
 	if domain, ok := s.conf.GetMatchingDomain(s.fromDomain); ok && domain.DKIM {
-		bodyHash := s.mmauth.GetBodyHash(mmauth.BodyCanonicalizationAndAlgorithm{
-			Body:      mmauth.Canonicalization(domain.BodyCanonicalization),
-			Algorithm: domain.HashAlgo,
-			Limit:     0,
-		})
-
-		var algo dkim.SignatureAlgorithm
-		switch domain.PrivateKeySigner.Public().(type) {
-		case *rsa.PublicKey:
-			algo = dkim.SignatureAlgorithmRSA_SHA256
-		case ed25519.PublicKey:
-			algo = dkim.SignatureAlgorithmED25519_SHA256
-		default:
-			log.Printf("unknown key type: %T", domain.PrivateKeySigner)
+		bodyHash := s.mmauth.GetBodyHash(createBodyHashConfig(domain.BodyCanonicalization, domain.HashAlgo, 0))
+		if bodyHash == "" {
+			s.logError("DKIM body hash is empty")
 			return
 		}
 
-		// DKIM署名
+		algo, err := getKeyTypeAlgo(domain.PrivateKeySigner.Public())
+		if err != nil {
+			s.logError("%v", err)
+			return
+		}
+
+		// DKIM 署名
 		dkim := dkim.Signature{
 			Algorithm:        algo,
 			Signature:        "",
@@ -209,12 +227,12 @@ func DKIMSign(s *Session, m *milter.Modifier) {
 
 		if err := dkim.Sign(mmauth.ExtractHeadersDKIM(s.mmauth.Headers, s.conf.DKIMSignHeaders),
 			domain.PrivateKeySigner); err != nil {
-			log.Printf("dkim.Sign: %v", err)
+			s.logError("dkim.Sign: %v", err)
 			return
 		}
 
 		if err := m.InsertHeader(1, "DKIM-Signature", dkim.String()); err != nil {
-			log.Printf("DKIM Signature Insert Error: %v", err)
+			s.logError("DKIM Signature Insert Error: %v", err)
 			return
 		}
 		s.mmauth.Headers = append(s.mmauth.Headers, "DKIM-Signature: "+dkim.String())
@@ -228,46 +246,46 @@ func ARCSign(s *Session, m *milter.Modifier) {
 
 	if domain, ok := s.conf.GetMatchingDomain(s.rcptToDomain); ok && domain.ARC {
 		if s.mmauth.AuthenticationHeaders == nil {
-			log.Printf("AuthenticationHeaders is nil")
+			s.logError("AuthenticationHeaders is nil")
+			return
 		}
 		ah := s.mmauth.AuthenticationHeaders.ARCSignatures
 
-		// ARC-Chain-Validation-Resultがfailの場合はARC署名を行わない
+		// ARC-Chain-Validation-Result が fail の場合は ARC 署名を行わない
 		if ah.GetARCChainValidation() == arc.ChainValidationResultFail {
-			log.Printf("ARC-Chain-Validation-Result is fail skip ARC signing")
+			s.logError("ARC-Chain-Validation-Result is fail skip ARC signing")
 			return
 		}
 
-		var algo arc.SignatureAlgorithm
+		// 署名アルゴリズムの判定
+		var arcAlgo arc.SignatureAlgorithm
 		switch domain.PrivateKeySigner.Public().(type) {
 		case *rsa.PublicKey:
-			algo = arc.SignatureAlgorithmRSA_SHA256
+			arcAlgo = arc.SignatureAlgorithmRSA_SHA256
 		case ed25519.PublicKey:
-			algo = arc.SignatureAlgorithmED25519_SHA256
+			arcAlgo = arc.SignatureAlgorithmED25519_SHA256
 		default:
-			log.Printf("unknown key type: %T", domain.PrivateKeySigner)
+			s.logError("unknown key type: %T", domain.PrivateKeySigner)
 			return
 		}
 
 		instanceNumber := ah.GetMaxInstance() + 1
 		signature := arc.ARCMessageSignature{
 			InstanceNumber:   instanceNumber,
-			Algorithm:        algo,
+			Algorithm:        arcAlgo,
 			Domain:           s.rcptToDomain,
 			Selector:         domain.ARCSelector,
 			Canonicalization: domain.HeaderCanonicalization + "/" + domain.BodyCanonicalization,
-			BodyHash: s.mmauth.GetBodyHash(
-				mmauth.BodyCanonicalizationAndAlgorithm{
-					Body:      mmauth.CanonicalizationRelaxed,
-					Algorithm: crypto.SHA256,
-					Limit:     0,
-				},
-			),
+			BodyHash:         s.mmauth.GetBodyHash(createBodyHashConfig(domain.BodyCanonicalization, domain.HashAlgo, 0)),
+		}
+		if signature.BodyHash == "" {
+			s.logError("ARC body hash is empty")
+			return
 		}
 
 		if err := signature.Sign(mmauth.ExtractHeadersDKIM(s.mmauth.Headers, s.conf.ARCSignHeaders),
 			domain.PrivateKeySigner); err != nil {
-			log.Printf("signature.Sign: %v", err)
+			s.logError("signature.Sign: %v", err)
 			return
 		}
 
@@ -278,10 +296,10 @@ func ARCSign(s *Session, m *milter.Modifier) {
 			Results:        results,
 		}
 
-		// ARC-Seal署名
+		// ARC-Seal 署名
 		seal := arc.ARCSeal{
 			InstanceNumber: instanceNumber,
-			Algorithm:      algo,
+			Algorithm:      arcAlgo,
 			Domain:         s.rcptToDomain,
 			Selector:       domain.ARCSelector,
 			ChainValidation: arc.ChainValidationResult(
@@ -293,66 +311,66 @@ func ARCSign(s *Session, m *milter.Modifier) {
 		headers = append(headers, "ARC-Message-Signature: "+signature.String())
 
 		if err := seal.Sign(headers, domain.PrivateKeySigner); err != nil {
-			log.Printf("seal.Sign: %v", err)
+			s.logError("seal.Sign: %v", err)
 			return
 		}
 
 		if err := m.InsertHeader(1, "ARC-Authentication-Results", result.String()); err != nil {
-			log.Printf("ARC-Authentication-Results Insert Error: %v", err)
+			s.logError("ARC-Authentication-Results Insert Error: %v", err)
 			return
 		}
 		if err := m.InsertHeader(1, "ARC-Message-Signature", signature.String()); err != nil {
-			log.Printf("ARC-Message-Signature Insert Error: %v", err)
+			s.logError("ARC-Message-Signature Insert Error: %v", err)
 			return
 		}
 		if err := m.InsertHeader(1, "ARC-Seal", seal.String()); err != nil {
-			log.Printf("ARC-Seal Insert Error: %v", err)
+			s.logError("ARC-Seal Insert Error: %v", err)
 			return
 		}
 	}
 }
 
 func (s *Session) EndOfMessage(m *milter.Modifier) (*milter.Response, error) {
-	debugLog("EndOfMessage")
+	s.debugLog("EndOfMessage")
 	if s.mmauth == nil {
 		return milter.RespContinue, nil
 	}
 	if err := s.mmauth.Close(); err != nil {
-		log.Printf("s.mmauth.Close: %v", err)
+		s.logError("s.mmauth.Close: %v", err)
 		return milter.RespContinue, nil
 	}
 
 	// Verify
 	s.mmauth.Verify()
 
-	// DKIM署名
+	// DKIM 署名
 	DKIMSign(s, m)
 
-	// ARC署名
+	// ARC 署名
 	ARCSign(s, m)
 
-	debugLog("session: %s", pp.Sprint(s))
+	s.debugLog("session: %s", pp.Sprint(s))
 
 	return milter.RespContinue, nil
 }
 
 func (s *Session) Abort(_ *milter.Modifier) error {
-	debugLog("Abort")
+	s.debugLog("Abort")
 
 	if s.mmauth != nil {
 		if err := s.mmauth.Close(); err != nil {
-			log.Printf("s.mmauth.Close: %v", err)
+			s.logError("s.mmauth.Close: %v", err)
 		}
 	}
 	return nil
 }
 
 func (s *Session) Cleanup() {
-	debugLog("Cleanup")
+	s.debugLog("Cleanup")
 
 	if s.mmauth != nil {
 		if err := s.mmauth.Close(); err != nil {
-			log.Printf("s.mmauth.Close: %v", err)
+			s.logError("s.mmauth.Close: %v", err)
 		}
 	}
 }

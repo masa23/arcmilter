@@ -248,6 +248,24 @@ func Test_matchDomain(t *testing.T) {
 			domain:   "anything",
 			expected: true,
 		},
+		{
+			name:     "deep wildcard matches",
+			pattern:  "*.sub.example.com",
+			domain:   "sub.example.com",
+			expected: true,
+		},
+		{
+			name:     "deep wildcard matches deep subdomain",
+			pattern:  "*.sub.example.com",
+			domain:   "mail.sub.example.com",
+			expected: true,
+		},
+		{
+			name:     "deep wildcard does not match",
+			pattern:  "*.sub.example.com",
+			domain:   "other.example.com",
+			expected: false,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -383,4 +401,169 @@ func Test_GetMatchingDomain(t *testing.T) {
 			}
 		})
 	}
+
+	deepWildcardConfig := &Config{
+		Domains: map[string]Domain{
+			"example.com": {
+				Domain:         "example.com",
+				Pattern:        "example.com",
+				Selector:       "exact",
+				PrivateKeyFile: "/tmp/keys/exact.key",
+				DKIM:           true,
+			},
+			"*.example.com": {
+				Domain:         "*.example.com",
+				Pattern:        "*.example.com",
+				Selector:       "wildcard",
+				PrivateKeyFile: "/tmp/keys/wildcard.key",
+				DKIM:           true,
+			},
+			"*.deep.example.com": {
+				Domain:         "*.deep.example.com",
+				Pattern:        "*.deep.example.com",
+				Selector:       "deep",
+				PrivateKeyFile: "/tmp/keys/deep.key",
+				DKIM:           true,
+			},
+			"*": {
+				Domain:         "*",
+				Pattern:        "*",
+				Selector:       "default",
+				PrivateKeyFile: "/tmp/keys/default.key",
+				DKIM:           true,
+			},
+		},
+	}
+
+	t.Run("deep wildcard priority", func(t *testing.T) {
+		d, ok := deepWildcardConfig.GetMatchingDomain("sub.deep.example.com")
+		if !ok {
+			t.Error("expected match")
+		} else if d.Pattern != "*.deep.example.com" {
+			t.Errorf("expected pattern *.deep.example.com, got %s", d.Pattern)
+		}
+	})
+
+	t.Run("wildcard priority over deep wildcard", func(t *testing.T) {
+		d, ok := deepWildcardConfig.GetMatchingDomain("sub.example.com")
+		if !ok {
+			t.Error("expected match")
+		} else if d.Pattern != "*.example.com" {
+			t.Errorf("expected pattern *.example.com, got %s", d.Pattern)
+		}
+	})
+
+	t.Run("exact priority over wildcard", func(t *testing.T) {
+		d, ok := deepWildcardConfig.GetMatchingDomain("example.com")
+		if !ok {
+			t.Error("expected match")
+		} else if d.Pattern != "example.com" {
+			t.Errorf("expected pattern example.com, got %s", d.Pattern)
+		}
+	})
+
+	t.Run("default wildcard fallback", func(t *testing.T) {
+		d, ok := deepWildcardConfig.GetMatchingDomain("random.com")
+		if !ok {
+			t.Error("expected match")
+		} else if d.Pattern != "*" {
+			t.Errorf("expected pattern *, got %s", d.Pattern)
+		}
+	})
+
+	t.Run("no match case", func(t *testing.T) {
+		// * を含まない設定でマッチしないケース
+		noDefaultConfig := &Config{
+			Domains: map[string]Domain{
+				"example.com": {
+					Domain:         "example.com",
+					Pattern:        "example.com",
+					Selector:       "exact",
+					PrivateKeyFile: "/tmp/keys/exact.key",
+					DKIM:           true,
+				},
+				"*.example.com": {
+					Domain:         "*.example.com",
+					Pattern:        "*.example.com",
+					Selector:       "wildcard",
+					PrivateKeyFile: "/tmp/keys/wildcard.key",
+					DKIM:           true,
+				},
+			},
+		}
+		_, ok := noDefaultConfig.GetMatchingDomain("nonexistent.example.org")
+		if ok {
+			t.Error("expected no match")
+		}
+	})
+
+	t.Run("multiple wildcard patterns priority", func(t *testing.T) {
+		multiConfig := &Config{
+			Domains: map[string]Domain{
+				"*.example.com": {
+					Domain:         "*.example.com",
+					Pattern:        "*.example.com",
+					Selector:       "example-com",
+					PrivateKeyFile: "/tmp/keys/example-com.key",
+					DKIM:           true,
+				},
+				"*.example.jp": {
+					Domain:         "*.example.jp",
+					Pattern:        "*.example.jp",
+					Selector:       "example-jp",
+					PrivateKeyFile: "/tmp/keys/example-jp.key",
+					DKIM:           true,
+				},
+				"*.deep.example.com": {
+					Domain:         "*.deep.example.com",
+					Pattern:        "*.deep.example.com",
+					Selector:       "deep-example-com",
+					PrivateKeyFile: "/tmp/keys/deep-example-com.key",
+					DKIM:           true,
+				},
+				"*.deep.example.jp": {
+					Domain:         "*.deep.example.jp",
+					Pattern:        "*.deep.example.jp",
+					Selector:       "deep-example-jp",
+					PrivateKeyFile: "/tmp/keys/deep-example-jp.key",
+					DKIM:           true,
+				},
+				"*": {
+					Domain:         "*",
+					Pattern:        "*",
+					Selector:       "default",
+					PrivateKeyFile: "/tmp/keys/default.key",
+					DKIM:           true,
+				},
+			},
+		}
+
+		d, ok := multiConfig.GetMatchingDomain("mail.sub.example.com")
+		if !ok {
+			t.Error("expected match")
+		} else if d.Pattern != "*.example.com" {
+			t.Errorf("expected pattern *.example.com, got %s", d.Pattern)
+		}
+
+		d, ok = multiConfig.GetMatchingDomain("mail.sub.deep.example.com")
+		if !ok {
+			t.Error("expected match")
+		} else if d.Pattern != "*.deep.example.com" {
+			t.Errorf("expected pattern *.deep.example.com, got %s", d.Pattern)
+		}
+
+		d, ok = multiConfig.GetMatchingDomain("mail.example.jp")
+		if !ok {
+			t.Error("expected match")
+		} else if d.Pattern != "*.example.jp" {
+			t.Errorf("expected pattern *.example.jp, got %s", d.Pattern)
+		}
+
+		d, ok = multiConfig.GetMatchingDomain("mail.sub.deep.example.jp")
+		if !ok {
+			t.Error("expected match")
+		} else if d.Pattern != "*.deep.example.jp" {
+			t.Errorf("expected pattern *.deep.example.jp, got %s", d.Pattern)
+		}
+	})
 }
