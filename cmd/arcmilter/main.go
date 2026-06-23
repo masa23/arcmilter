@@ -60,7 +60,7 @@ func checkPidFile(path string) error {
 		if err := syscall.Kill(oldPid, 0); err == nil {
 			return fmt.Errorf("pid file %s already exists", path)
 		} else if !errors.Is(err, syscall.ESRCH) {
-			return fmt.Errorf("pid file %s refers to inaccessible process %d: %v", path, oldPid, err)
+			return fmt.Errorf("pid file %s already exists (process %d exists but cannot be signaled: %v)", path, oldPid, err)
 		} else {
 			// 起動していなければ上書き
 			if err := os.WriteFile(path, []byte(strconv.Itoa(pid)), 0644); err != nil {
@@ -183,7 +183,7 @@ func checkSignal() {
 			go execChildProcess(conf.LogFd, msockfd)
 			// Ready trueの子プロセスを待つ
 			ticker := time.NewTicker(1 * time.Second)
-			timeout := time.After(childReadyTimeout)
+			timer := time.NewTimer(childReadyTimeout)
 			ready := false
 		waitReady:
 			for {
@@ -192,7 +192,7 @@ func checkSignal() {
 					if hasReadyChild() {
 						ready = true
 					}
-				case <-timeout:
+				case <-timer.C:
 					log.Printf("timed out waiting for child process readiness")
 					break waitReady
 				}
@@ -201,6 +201,12 @@ func checkSignal() {
 				}
 			}
 			ticker.Stop()
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
 			if !ready {
 				continue
 			}
