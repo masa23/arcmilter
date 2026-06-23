@@ -135,6 +135,7 @@ func testMilter(t *testing.T) {
 		mailSender    string
 		mailEsmtpArgs string
 		rcptRcpt      string
+		extraRcpts    []string
 		rcptEsmtpArgs string
 		headers       []struct {
 			field string
@@ -231,6 +232,7 @@ func testMilter(t *testing.T) {
 			heloHostname: "example.com",
 			mailSender:   "<test@example.com>",
 			rcptRcpt:     "<recive@example.jp>",
+			extraRcpts:   []string{"<outside@example.com>"},
 			headers: []struct {
 				field string
 				value string
@@ -298,6 +300,9 @@ func testMilter(t *testing.T) {
 			}
 			handleMilterResponse(session.Mail(tc.mailSender, tc.mailEsmtpArgs))
 			handleMilterResponse(session.Rcpt(tc.rcptRcpt, tc.rcptEsmtpArgs))
+			for _, rcpt := range tc.extraRcpts {
+				handleMilterResponse(session.Rcpt(rcpt, tc.rcptEsmtpArgs))
+			}
 			handleMilterResponse(session.DataStart())
 			for _, header := range tc.headers {
 				handleMilterResponse(session.HeaderField(header.field, header.value, nil))
@@ -500,6 +505,7 @@ func Test_checkPidFile(t *testing.T) {
 		name      string
 		fileExist bool
 		pidExist  bool
+		pidStr    string
 		expectErr bool
 	}{
 		{
@@ -520,25 +526,39 @@ func Test_checkPidFile(t *testing.T) {
 			pidExist:  true,
 			expectErr: true,
 		},
+		{
+			name:      "pid file contains zero",
+			fileExist: true,
+			pidStr:    "0",
+			expectErr: true,
+		},
+		{
+			name:      "pid file contains negative pid",
+			fileExist: true,
+			pidStr:    "-1",
+			expectErr: true,
+		},
 	}
 
 	for _, tt := range testCases {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.fileExist {
-				var pidStr string
+				pidStr := tt.pidStr
 
 				// PIDがある場合のテストは、test実行のpidを書き込む
-				if tt.pidExist {
-					pid := os.Getpid()
-					pidStr = strconv.Itoa(pid)
-				} else {
-					for {
-						randPid := rand.Intn(9000) + 1000
-						if err := syscall.Kill(randPid, 0); err == nil {
-							continue
+				if pidStr == "" {
+					if tt.pidExist {
+						pid := os.Getpid()
+						pidStr = strconv.Itoa(pid)
+					} else {
+						for {
+							randPid := rand.Intn(9000) + 1000
+							if err := syscall.Kill(randPid, 0); err == nil {
+								continue
+							}
+							pidStr = strconv.Itoa(randPid)
+							break
 						}
-						pidStr = strconv.Itoa(randPid)
-						break
 					}
 				}
 
