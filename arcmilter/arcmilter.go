@@ -77,6 +77,34 @@ func (s *Session) debugLog(format string, v ...interface{}) {
 	}
 }
 
+func (s *Session) closeMMAuth() {
+	if s.mmauth == nil {
+		return
+	}
+	if err := s.mmauth.Close(); err != nil {
+		s.logError("s.mmauth.Close: %v", err)
+	}
+	s.mmauth = nil
+}
+
+func (s *Session) resetMessageState() {
+	s.closeMMAuth()
+	s.isARCSign = false
+	s.isDKIMSign = false
+	s.rcptToDomain = ""
+	s.mailFrom = ""
+	s.from = ""
+	s.fromDomain = ""
+	s.authn = ""
+	s.mmauth = mmauth.NewMMAuth()
+}
+
+func (s *Session) ensureMMAuth() {
+	if s.mmauth == nil {
+		s.mmauth = mmauth.NewMMAuth()
+	}
+}
+
 func (s *Session) Connect(host string, family string, port uint16, addr string, m *milter.Modifier) (*milter.Response, error) {
 	s.debugLog("Connect: %s", addr)
 	if ip := net.ParseIP(addr); ip != nil {
@@ -92,6 +120,7 @@ func (s *Session) Helo(name string, m *milter.Modifier) (*milter.Response, error
 }
 
 func (s *Session) MailFrom(from string, esmtpArgs string, m *milter.Modifier) (*milter.Response, error) {
+	s.resetMessageState()
 	s.authn = m.Macros.Get(milter.MacroAuthAuthen)
 	s.mailFrom = from
 	s.debugLog("MailFrom: %s", from)
@@ -100,9 +129,7 @@ func (s *Session) MailFrom(from string, esmtpArgs string, m *milter.Modifier) (*
 
 func (s *Session) RcptTo(rcptTo string, esmtpArgs string, m *milter.Modifier) (*milter.Response, error) {
 	s.debugLog("RcptTo: %s", rcptTo)
-	if s.mmauth == nil {
-		s.mmauth = mmauth.NewMMAuth()
-	}
+	s.ensureMMAuth()
 
 	// SMTP 認証済みもしくは IP アドレスが MyNetworks に含まれている場合は署名を行わない
 	if s.authn != "" || s.conf.IsMyNetwork(s.remoteAddr) {
@@ -129,7 +156,10 @@ func (s *Session) RcptTo(rcptTo string, esmtpArgs string, m *milter.Modifier) (*
 }
 
 func (s *Session) Header(name, value string, m *milter.Modifier) (*milter.Response, error) {
-	s.mmauth.Write([]byte(name + ": " + value + "\r\n"))
+	s.ensureMMAuth()
+	if _, err := s.mmauth.Write([]byte(name + ": " + value + "\r\n")); err != nil {
+		s.logError("s.mmauth.Write: %v", err)
+	}
 
 	if strings.ToLower(name) != "from" {
 		return milter.RespContinue, nil
@@ -157,6 +187,7 @@ func (s *Session) Header(name, value string, m *milter.Modifier) (*milter.Respon
 
 func (s *Session) Headers(m *milter.Modifier) (*milter.Response, error) {
 	s.debugLog("Headers")
+	s.ensureMMAuth()
 	if _, err := s.mmauth.Write([]byte("\r\n")); err != nil {
 		s.logError("s.mmauth.Write: %v", err)
 	}
@@ -164,6 +195,7 @@ func (s *Session) Headers(m *milter.Modifier) (*milter.Response, error) {
 }
 
 func (s *Session) BodyChunk(chunk []byte, m *milter.Modifier) (*milter.Response, error) {
+	s.ensureMMAuth()
 	if _, err := s.mmauth.Write(chunk); err != nil {
 		s.logError("s.mmauth.Write: %v", err)
 	}
@@ -339,6 +371,7 @@ func (s *Session) EndOfMessage(m *milter.Modifier) (*milter.Response, error) {
 	}
 	if err := s.mmauth.Close(); err != nil {
 		s.logError("s.mmauth.Close: %v", err)
+		s.mmauth = nil
 		return milter.RespContinue, nil
 	}
 
@@ -352,6 +385,7 @@ func (s *Session) EndOfMessage(m *milter.Modifier) (*milter.Response, error) {
 	ARCSign(s, m)
 
 	s.debugLog("session: %s", pp.Sprint(s))
+	s.mmauth = nil
 
 	return milter.RespContinue, nil
 }
@@ -359,20 +393,19 @@ func (s *Session) EndOfMessage(m *milter.Modifier) (*milter.Response, error) {
 func (s *Session) Abort(_ *milter.Modifier) error {
 	s.debugLog("Abort")
 
-	if s.mmauth != nil {
-		if err := s.mmauth.Close(); err != nil {
-			s.logError("s.mmauth.Close: %v", err)
-		}
-	}
+	s.closeMMAuth()
+	s.isARCSign = false
+	s.isDKIMSign = false
+	s.rcptToDomain = ""
+	s.mailFrom = ""
+	s.from = ""
+	s.fromDomain = ""
+	s.authn = ""
 	return nil
 }
 
 func (s *Session) Cleanup() {
 	s.debugLog("Cleanup")
 
-	if s.mmauth != nil {
-		if err := s.mmauth.Close(); err != nil {
-			s.logError("s.mmauth.Close: %v", err)
-		}
-	}
+	s.closeMMAuth()
 }

@@ -52,9 +52,13 @@ func checkPidFile(path string) error {
 	} else if err != nil {
 		return fmt.Errorf("failed to read pid file: %v", err)
 	} else {
-		oldPid, err := strconv.Atoi(strings.TrimSpace(string(buf)))
+		pidStr := strings.TrimSpace(string(buf))
+		oldPid, err := strconv.Atoi(pidStr)
 		if err != nil {
 			return fmt.Errorf("failed to parse pid file: %v", err)
+		}
+		if oldPid <= 0 {
+			return fmt.Errorf("failed to parse pid file: invalid pid %q", pidStr)
 		}
 		// 既に起動しているか確認
 		if err := syscall.Kill(oldPid, 0); err == nil {
@@ -113,6 +117,20 @@ func setChildrenReady(ready bool) {
 	defer childMu.Unlock()
 	for i := range childlen {
 		childlen[i].Ready = ready
+	}
+}
+
+func restoreChildrenReady(children []child) {
+	childMu.Lock()
+	defer childMu.Unlock()
+	readyByPid := make(map[int]bool, len(children))
+	for _, c := range children {
+		readyByPid[c.Process.Pid] = c.Ready
+	}
+	for i, c := range childlen {
+		if ready, ok := readyByPid[c.Process.Pid]; ok {
+			childlen[i].Ready = ready
+		}
 	}
 }
 
@@ -179,8 +197,9 @@ func checkSignal() {
 				log.Printf("failed to open log file: %v", err)
 			}
 			// 子プロセスのReadyをfalseにする
+			oldChildren := childrenSnapshot()
 			setChildrenReady(false)
-			go execChildProcess(conf.LogFd, msockfd)
+			newChild := execChildProcess(conf.LogFd, msockfd)
 			// Ready trueの子プロセスを待つ
 			ticker := time.NewTicker(1 * time.Second)
 			timer := time.NewTimer(childReadyTimeout)
@@ -208,6 +227,10 @@ func checkSignal() {
 				}
 			}
 			if !ready {
+				restoreChildrenReady(oldChildren)
+				if err := newChild.Signal(syscall.SIGTERM); err != nil {
+					log.Printf("failed to send signal to new child process: %v", err)
+				}
 				continue
 			}
 			// Ready falseの子プロセスを終了
@@ -301,7 +324,7 @@ func childProcess() {
 	}
 }
 
-func execChildProcess(logfd, msockfd *os.File) {
+func execChildProcess(logfd, msockfd *os.File) *os.Process {
 	cmd := exec.Cmd{
 		Stdin:  os.Stdin,
 		Stdout: logfd,
@@ -320,18 +343,21 @@ func execChildProcess(logfd, msockfd *os.File) {
 	// childlenに追加する
 	addChild(cmd.Process)
 	log.Printf("child process started pid=%d", cmd.Process.Pid)
-	err = cmd.Wait()
-	if err != nil {
-		log.Printf("child process wait error: %v", err)
-		// 子プロセスが異常終了した場合は再起動
-		// すでに子プロセスが2以上起動している場合は再起動しない
-		if childCount() < 2 {
-			go execChildProcess(logfd, msockfd)
+	go func() {
+		err = cmd.Wait()
+		if err != nil {
+			log.Printf("child process wait error: %v", err)
+			// 子プロセスが異常終了した場合は再起動
+			// すでに子プロセスが2以上起動している場合は再起動しない
+			if childCount() < 2 {
+				execChildProcess(logfd, msockfd)
+			}
 		}
-	}
-	// childlenから消す
-	removeChild(cmd.Process)
-	log.Printf("child process exit pid=%d", cmd.Process.Pid)
+		// childlenから消す
+		removeChild(cmd.Process)
+		log.Printf("child process exit pid=%d", cmd.Process.Pid)
+	}()
+	return cmd.Process
 }
 
 func main() {

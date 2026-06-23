@@ -505,6 +505,7 @@ func Test_checkPidFile(t *testing.T) {
 		name      string
 		fileExist bool
 		pidExist  bool
+		pidStr    string
 		expectErr bool
 	}{
 		{
@@ -525,25 +526,39 @@ func Test_checkPidFile(t *testing.T) {
 			pidExist:  true,
 			expectErr: true,
 		},
+		{
+			name:      "pid file contains zero",
+			fileExist: true,
+			pidStr:    "0",
+			expectErr: true,
+		},
+		{
+			name:      "pid file contains negative pid",
+			fileExist: true,
+			pidStr:    "-1",
+			expectErr: true,
+		},
 	}
 
 	for _, tt := range testCases {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.fileExist {
-				var pidStr string
+				pidStr := tt.pidStr
 
 				// PIDがある場合のテストは、test実行のpidを書き込む
-				if tt.pidExist {
-					pid := os.Getpid()
-					pidStr = strconv.Itoa(pid)
-				} else {
-					for {
-						randPid := rand.Intn(9000) + 1000
-						if err := syscall.Kill(randPid, 0); err == nil {
-							continue
+				if pidStr == "" {
+					if tt.pidExist {
+						pid := os.Getpid()
+						pidStr = strconv.Itoa(pid)
+					} else {
+						for {
+							randPid := rand.Intn(9000) + 1000
+							if err := syscall.Kill(randPid, 0); err == nil {
+								continue
+							}
+							pidStr = strconv.Itoa(randPid)
+							break
 						}
-						pidStr = strconv.Itoa(randPid)
-						break
 					}
 				}
 
