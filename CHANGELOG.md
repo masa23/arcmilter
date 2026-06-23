@@ -1,5 +1,10 @@
 # Changelog
 
+## [v0.0.29](https://github.com/masa23/arcmilter/compare/v0.0.28...v0.0.29) - 2026-06-23
+
+- 設定読み込みを整理し署名処理のガードを追加 by @masa23 in https://github.com/masa23/arcmilter/pull/57
+- milter の子プロセス管理と複数 RCPT 時の署名処理を修正 by @masa23 in https://github.com/masa23/arcmilter/pull/59
+
 ## [v0.0.28](https://github.com/masa23/arcmilter/compare/v0.0.27...v0.0.28) - 2026-05-22
 - update auto restart by @masa23 in https://github.com/masa23/arcmilter/pull/55
 
