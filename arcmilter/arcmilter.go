@@ -50,7 +50,7 @@ func (a *ARCMilter) Serve(l net.Listener, conf *config.Config) error {
 			milter.OptNoMailReply|milter.OptNoRcptReply|milter.OptNoDataReply|
 			milter.OptNoUnknownReply|milter.OptNoEOHReply|milter.OptNoBodyReply),
 		milter.WithAction(milter.OptChangeFrom|milter.OptAddRcpt|milter.OptRemoveRcpt|milter.OptChangeHeader),
-		milter.WithMacroRequest(milter.StageHelo, []milter.MacroName{milter.MacroAuthAuthen}),
+		milter.WithMacroRequest(milter.StageMail, []milter.MacroName{milter.MacroAuthAuthen}),
 	)
 	defer server.Close()
 	log.Printf("Start milter server")
@@ -100,7 +100,9 @@ func (s *Session) MailFrom(from string, esmtpArgs string, m *milter.Modifier) (*
 
 func (s *Session) RcptTo(rcptTo string, esmtpArgs string, m *milter.Modifier) (*milter.Response, error) {
 	s.debugLog("RcptTo: %s", rcptTo)
-	s.mmauth = mmauth.NewMMAuth()
+	if s.mmauth == nil {
+		s.mmauth = mmauth.NewMMAuth()
+	}
 
 	// SMTP 認証済みもしくは IP アドレスが MyNetworks に含まれている場合は署名を行わない
 	if s.authn != "" || s.conf.IsMyNetwork(s.remoteAddr) {
@@ -112,11 +114,11 @@ func (s *Session) RcptTo(rcptTo string, esmtpArgs string, m *milter.Modifier) (*
 		s.logError("util.ParseAddressDomain: %v", err)
 		return milter.RespContinue, nil
 	}
-	s.rcptToDomain = rpctToDomain
 
 	// 宛先が対象ドメインなら ARC 署名と BodyHash を設定
-	if domain, ok := s.conf.GetMatchingDomain(rpctToDomain); ok {
+	if domain, ok := s.conf.GetMatchingDomain(rpctToDomain); ok && domain.ARC && !s.isARCSign {
 		s.isARCSign = true
+		s.rcptToDomain = rpctToDomain
 		s.mmauth.AddBodyHash(
 			createBodyHashConfig(domain.BodyCanonicalization, domain.HashAlgo, 0),
 		)

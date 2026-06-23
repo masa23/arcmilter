@@ -12,6 +12,8 @@ import (
 	"os/exec"
 	"os/signal"
 	"strconv"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -24,8 +26,11 @@ var (
 	version  = "dev"
 	conf     *config.Config
 	childlen []child
+	childMu  sync.Mutex
 	msockfd  *os.File
 )
+
+const childReadyTimeout = 10 * time.Second
 
 type child struct {
 	Process *os.Process
@@ -44,22 +49,90 @@ func checkPidFile(path string) error {
 		if err := os.WriteFile(path, []byte(strconv.Itoa(pid)), 0644); err != nil {
 			return fmt.Errorf("failed to create pid file: %v", err)
 		}
+	} else if err != nil {
+		return fmt.Errorf("failed to read pid file: %v", err)
 	} else {
-		oldPid, err := strconv.Atoi(string(buf))
+		oldPid, err := strconv.Atoi(strings.TrimSpace(string(buf)))
 		if err != nil {
 			return fmt.Errorf("failed to parse pid file: %v", err)
 		}
 		// 既に起動しているか確認
 		if err := syscall.Kill(oldPid, 0); err == nil {
 			return fmt.Errorf("pid file %s already exists", path)
+		} else if !errors.Is(err, syscall.ESRCH) {
+			return fmt.Errorf("pid file %s refers to inaccessible process %d: %v", path, oldPid, err)
 		} else {
 			// 起動していなければ上書き
 			if err := os.WriteFile(path, []byte(strconv.Itoa(pid)), 0644); err != nil {
-				log.Fatalf("failed to write pid file: %v", err)
+				return fmt.Errorf("failed to write pid file: %v", err)
 			}
 		}
 	}
 	return nil
+}
+
+func addChild(p *os.Process) {
+	childMu.Lock()
+	defer childMu.Unlock()
+	childlen = append(childlen, child{
+		Process: p,
+		Ready:   false,
+	})
+}
+
+func removeChild(p *os.Process) {
+	childMu.Lock()
+	defer childMu.Unlock()
+	for i, c := range childlen {
+		if c.Process == p {
+			childlen = append(childlen[:i], childlen[i+1:]...)
+			break
+		}
+	}
+}
+
+func childCount() int {
+	childMu.Lock()
+	defer childMu.Unlock()
+	return len(childlen)
+}
+
+func markChildReady(pid int) {
+	childMu.Lock()
+	defer childMu.Unlock()
+	for i, c := range childlen {
+		if c.Process.Pid == pid {
+			childlen[i].Ready = true
+			break
+		}
+	}
+}
+
+func setChildrenReady(ready bool) {
+	childMu.Lock()
+	defer childMu.Unlock()
+	for i := range childlen {
+		childlen[i].Ready = ready
+	}
+}
+
+func hasReadyChild() bool {
+	childMu.Lock()
+	defer childMu.Unlock()
+	for _, c := range childlen {
+		if c.Ready {
+			return true
+		}
+	}
+	return false
+}
+
+func childrenSnapshot() []child {
+	childMu.Lock()
+	defer childMu.Unlock()
+	children := make([]child, len(childlen))
+	copy(children, childlen)
+	return children
 }
 
 func openLogFile() error {
@@ -106,26 +179,33 @@ func checkSignal() {
 				log.Printf("failed to open log file: %v", err)
 			}
 			// 子プロセスのReadyをfalseにする
-			for i := range childlen {
-				childlen[i].Ready = false
-			}
+			setChildrenReady(false)
 			go execChildProcess(conf.LogFd, msockfd)
 			// Ready trueの子プロセスを待つ
-			f := false
+			ticker := time.NewTicker(1 * time.Second)
+			timeout := time.After(childReadyTimeout)
+			ready := false
+		waitReady:
 			for {
-				time.Sleep(1 * time.Second)
-				for _, c := range childlen {
-					if c.Ready {
-						f = true
-						break
+				select {
+				case <-ticker.C:
+					if hasReadyChild() {
+						ready = true
 					}
+				case <-timeout:
+					log.Printf("timed out waiting for child process readiness")
+					break waitReady
 				}
-				if f {
+				if ready {
 					break
 				}
 			}
+			ticker.Stop()
+			if !ready {
+				continue
+			}
 			// Ready falseの子プロセスを終了
-			for _, c := range childlen {
+			for _, c := range childrenSnapshot() {
 				if !c.Ready {
 					// 子プロセスにSIGTERMを送る
 					if err := c.Process.Signal(syscall.SIGTERM); err != nil {
@@ -135,7 +215,7 @@ func checkSignal() {
 			}
 		case syscall.SIGTERM:
 			// 子プロセスを終了
-			for _, c := range childlen {
+			for _, c := range childrenSnapshot() {
 				// 子プロセスにSIGTERMを送る
 				if err := c.Process.Signal(syscall.SIGTERM); err != nil {
 					log.Printf("failed to send signal to child process: %v", err)
@@ -232,27 +312,19 @@ func execChildProcess(logfd, msockfd *os.File) {
 		log.Fatalf("Failed to start child process: %v", err)
 	}
 	// childlenに追加する
-	childlen = append(childlen, child{
-		Process: cmd.Process,
-		Ready:   false,
-	})
+	addChild(cmd.Process)
 	log.Printf("child process started pid=%d", cmd.Process.Pid)
 	err = cmd.Wait()
 	if err != nil {
 		log.Printf("child process wait error: %v", err)
 		// 子プロセスが異常終了した場合は再起動
 		// すでに子プロセスが2以上起動している場合は再起動しない
-		if len(childlen) < 2 {
+		if childCount() < 2 {
 			go execChildProcess(logfd, msockfd)
 		}
 	}
 	// childlenから消す
-	for i, c := range childlen {
-		if c.Process == cmd.Process {
-			childlen = append(childlen[:i], childlen[i+1:]...)
-			break
-		}
-	}
+	removeChild(cmd.Process)
 	log.Printf("child process exit pid=%d", cmd.Process.Pid)
 }
 
@@ -363,12 +435,7 @@ func main() {
 	go func() {
 		ctrl := control.New(func(pid int) {
 			log.Printf("child process ready pid=%d", pid)
-			for i, c := range childlen {
-				if c.Process.Pid == pid {
-					childlen[i].Ready = true
-					break
-				}
-			}
+			markChildReady(pid)
 		})
 		if err := ctrl.Serve(csocket); err != nil {
 			log.Fatalf("Failed to serve control socket: %v", err)

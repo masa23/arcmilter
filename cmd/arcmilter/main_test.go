@@ -135,6 +135,7 @@ func testMilter(t *testing.T) {
 		mailSender    string
 		mailEsmtpArgs string
 		rcptRcpt      string
+		extraRcpts    []string
 		rcptEsmtpArgs string
 		headers       []struct {
 			field string
@@ -231,6 +232,7 @@ func testMilter(t *testing.T) {
 			heloHostname: "example.com",
 			mailSender:   "<test@example.com>",
 			rcptRcpt:     "<recive@example.jp>",
+			extraRcpts:   []string{"<outside@example.com>"},
 			headers: []struct {
 				field string
 				value string
@@ -298,6 +300,9 @@ func testMilter(t *testing.T) {
 			}
 			handleMilterResponse(session.Mail(tc.mailSender, tc.mailEsmtpArgs))
 			handleMilterResponse(session.Rcpt(tc.rcptRcpt, tc.rcptEsmtpArgs))
+			for _, rcpt := range tc.extraRcpts {
+				handleMilterResponse(session.Rcpt(rcpt, tc.rcptEsmtpArgs))
+			}
 			handleMilterResponse(session.DataStart())
 			for _, header := range tc.headers {
 				handleMilterResponse(session.HeaderField(header.field, header.value, nil))
