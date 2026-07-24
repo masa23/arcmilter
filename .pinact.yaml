@@ -1,0 +1,4 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/suzuki-shunsuke/pinact/v4.1.0/json-schema/pinact.json
+version: 3
+min_age:
+  value: 7
