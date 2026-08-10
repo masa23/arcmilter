@@ -1,5 +1,17 @@
 # Changelog
 
+## [v0.0.30](https://github.com/masa23/arcmilter/compare/v0.0.29...v0.0.30) - 2026-08-10
+
+- GitHub Actions の参照を pinact で固定する by @masa23 in https://github.com/masa23/arcmilter/pull/60
+- mainへのpushでもpinact検証を実行する by @masa23 in https://github.com/masa23/arcmilter/pull/62
+- pinactを全PRで実行して必須チェック化に備える by @masa23 in https://github.com/masa23/arcmilter/pull/63
+- GitHub ActionsをDependabotで定期更新する by @masa23 in https://github.com/masa23/arcmilter/pull/64
+- 任意階層のローカルActionをpinactの検査対象にする by @masa23 in https://github.com/masa23/arcmilter/pull/68
+- ローカルActionのDependabot更新範囲を検証する by @masa23 in https://github.com/masa23/arcmilter/pull/69
+- Bump actions/setup-go from 5.6.0 to 7.0.0 by @dependabot[bot] in https://github.com/masa23/arcmilter/pull/65
+- Bump actions/checkout from 4.4.0 to 7.0.1 by @dependabot[bot] in https://github.com/masa23/arcmilter/pull/66
+- Bump goreleaser/goreleaser-action from 6.4.0 to 7.2.3 by @dependabot[bot] in https://github.com/masa23/arcmilter/pull/67
+
 ## [v0.0.29](https://github.com/masa23/arcmilter/compare/v0.0.28...v0.0.29) - 2026-06-23
 
 - 設定読み込みを整理し署名処理のガードを追加 by @masa23 in https://github.com/masa23/arcmilter/pull/57
