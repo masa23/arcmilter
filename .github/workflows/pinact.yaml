@@ -21,6 +21,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Check Dependabot coverage
+        run: ruby .github/scripts/check-dependabot-action-coverage.rb
+
       - name: Create pinact config
         run: bash .github/scripts/create-pinact-config.sh .pinact.ci.yaml
 
