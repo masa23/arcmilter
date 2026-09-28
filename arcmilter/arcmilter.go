@@ -105,7 +105,7 @@ func (s *Session) ensureMMAuth() {
 	}
 }
 
-func (s *Session) Connect(host string, family string, port uint16, addr string, m *milter.Modifier) (*milter.Response, error) {
+func (s *Session) Connect(host string, family string, port uint16, addr string, m milter.Modifier) (*milter.Response, error) {
 	s.debugLog("Connect: %s", addr)
 	if ip := net.ParseIP(addr); ip != nil {
 		s.remoteAddr = ip
@@ -113,21 +113,21 @@ func (s *Session) Connect(host string, family string, port uint16, addr string, 
 	return milter.RespContinue, nil
 }
 
-func (s *Session) Helo(name string, m *milter.Modifier) (*milter.Response, error) {
+func (s *Session) Helo(name string, m milter.Modifier) (*milter.Response, error) {
 	s.debugLog("Helo: %s", name)
 	s.helo = name
 	return milter.RespContinue, nil
 }
 
-func (s *Session) MailFrom(from string, esmtpArgs string, m *milter.Modifier) (*milter.Response, error) {
+func (s *Session) MailFrom(from string, esmtpArgs string, m milter.Modifier) (*milter.Response, error) {
 	s.resetMessageState()
-	s.authn = m.Macros.Get(milter.MacroAuthAuthen)
+	s.authn = m.Get(milter.MacroAuthAuthen)
 	s.mailFrom = from
 	s.debugLog("MailFrom: %s", from)
 	return milter.RespContinue, nil
 }
 
-func (s *Session) RcptTo(rcptTo string, esmtpArgs string, m *milter.Modifier) (*milter.Response, error) {
+func (s *Session) RcptTo(rcptTo string, esmtpArgs string, m milter.Modifier) (*milter.Response, error) {
 	s.debugLog("RcptTo: %s", rcptTo)
 	s.ensureMMAuth()
 
@@ -155,7 +155,7 @@ func (s *Session) RcptTo(rcptTo string, esmtpArgs string, m *milter.Modifier) (*
 	return milter.RespContinue, nil
 }
 
-func (s *Session) Header(name, value string, m *milter.Modifier) (*milter.Response, error) {
+func (s *Session) Header(name, value string, m milter.Modifier) (*milter.Response, error) {
 	s.ensureMMAuth()
 	if _, err := s.mmauth.Write([]byte(name + ": " + value + "\r\n")); err != nil {
 		s.logError("s.mmauth.Write: %v", err)
@@ -185,7 +185,7 @@ func (s *Session) Header(name, value string, m *milter.Modifier) (*milter.Respon
 	return milter.RespContinue, nil
 }
 
-func (s *Session) Headers(m *milter.Modifier) (*milter.Response, error) {
+func (s *Session) Headers(m milter.Modifier) (*milter.Response, error) {
 	s.debugLog("Headers")
 	s.ensureMMAuth()
 	if _, err := s.mmauth.Write([]byte("\r\n")); err != nil {
@@ -194,7 +194,7 @@ func (s *Session) Headers(m *milter.Modifier) (*milter.Response, error) {
 	return milter.RespContinue, nil
 }
 
-func (s *Session) BodyChunk(chunk []byte, m *milter.Modifier) (*milter.Response, error) {
+func (s *Session) BodyChunk(chunk []byte, m milter.Modifier) (*milter.Response, error) {
 	s.ensureMMAuth()
 	if _, err := s.mmauth.Write(chunk); err != nil {
 		s.logError("s.mmauth.Write: %v", err)
@@ -223,7 +223,7 @@ func createBodyHashConfig(canonicalization string, hashAlgo crypto.Hash, limit i
 	}
 }
 
-func DKIMSign(s *Session, m *milter.Modifier) {
+func DKIMSign(s *Session, m milter.Modifier) {
 	if !s.isDKIMSign {
 		return
 	}
@@ -273,7 +273,7 @@ func DKIMSign(s *Session, m *milter.Modifier) {
 	}
 }
 
-func ARCSign(s *Session, m *milter.Modifier) {
+func ARCSign(s *Session, m milter.Modifier) {
 	if !s.isARCSign {
 		return
 	}
@@ -364,7 +364,7 @@ func ARCSign(s *Session, m *milter.Modifier) {
 	}
 }
 
-func (s *Session) EndOfMessage(m *milter.Modifier) (*milter.Response, error) {
+func (s *Session) EndOfMessage(m milter.Modifier) (*milter.Response, error) {
 	s.debugLog("EndOfMessage")
 	if s.mmauth == nil {
 		return milter.RespContinue, nil
@@ -390,7 +390,7 @@ func (s *Session) EndOfMessage(m *milter.Modifier) (*milter.Response, error) {
 	return milter.RespContinue, nil
 }
 
-func (s *Session) Abort(_ *milter.Modifier) error {
+func (s *Session) Abort(_ milter.Modifier) error {
 	s.debugLog("Abort")
 
 	s.closeMMAuth()
@@ -404,7 +404,7 @@ func (s *Session) Abort(_ *milter.Modifier) error {
 	return nil
 }
 
-func (s *Session) Cleanup() {
+func (s *Session) Cleanup(_ milter.Modifier) {
 	s.debugLog("Cleanup")
 
 	s.closeMMAuth()
