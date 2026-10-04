@@ -223,6 +223,26 @@ func createBodyHashConfig(canonicalization string, hashAlgo crypto.Hash, limit i
 	}
 }
 
+// extractDKIMSigningHeaders は署名対象を選び、同名ヘッダをメール内の順序に戻す。
+// mmauth の Sign が同名ヘッダを末尾から抽出するため、ここでは抽出済みの
+// 署名順を渡さず、各ヘッダ名の選択数と設定順を維持して渡す。
+func extractDKIMSigningHeaders(headers, keys []string) []string {
+	selected := mmauth.ExtractHeadersDKIM(headers, keys)
+	positions := make(map[string][]int)
+	for i, h := range selected {
+		name, _, _ := strings.Cut(h, ":")
+		name = strings.ToLower(strings.TrimSpace(name))
+		positions[name] = append(positions[name], i)
+	}
+	for _, indices := range positions {
+		for left, right := 0, len(indices)-1; left < right; left, right = left+1, right-1 {
+			i, j := indices[left], indices[right]
+			selected[i], selected[j] = selected[j], selected[i]
+		}
+	}
+	return selected
+}
+
 func DKIMSign(s *Session, m milter.Modifier) {
 	if !s.isDKIMSign {
 		return
@@ -259,7 +279,7 @@ func DKIMSign(s *Session, m milter.Modifier) {
 			Version:          1,
 		}
 
-		if err := dkim.Sign(mmauth.ExtractHeadersDKIM(s.mmauth.Headers, s.conf.DKIMSignHeaders),
+		if err := dkim.Sign(extractDKIMSigningHeaders(s.mmauth.Headers, s.conf.DKIMSignHeaders),
 			domain.PrivateKeySigner); err != nil {
 			s.logError("dkim.Sign: %v", err)
 			return
@@ -285,11 +305,21 @@ func ARCSign(s *Session, m milter.Modifier) {
 		}
 		ah := s.mmauth.AuthenticationHeaders.ARCSignatures
 
-		// ARC-Chain-Validation-Result が fail の場合は ARC 署名を行わない
-		if ah.GetARCChainValidation() == arc.ChainValidationResultFail {
-			s.logError("ARC-Chain-Validation-Result is fail skip ARC signing")
+		maxInstance := ah.GetMaxInstance()
+		// RFC 8617 §5.1: 最新の ARC-Seal がすでに cv=fail なら追加しない。
+		// 不正なチェーンでも判定できるよう、受信ヘッダから直接確認する。
+		for _, h := range s.mmauth.Headers {
+			seal, err := arc.ParseARCSeal(h)
+			if err == nil && seal.InstanceNumber == maxInstance && seal.ChainValidation == arc.ChainValidationResultFail {
+				s.logError("latest ARC-Seal has cv=fail skip ARC signing")
+				return
+			}
+		}
+		if maxInstance >= 50 {
+			s.logError("ARC instance limit reached skip ARC signing")
 			return
 		}
+		chainValidation := ah.GetARCChainValidation()
 
 		// 署名アルゴリズムの判定
 		var arcAlgo arc.SignatureAlgorithm
@@ -303,7 +333,7 @@ func ARCSign(s *Session, m milter.Modifier) {
 			return
 		}
 
-		instanceNumber := ah.GetMaxInstance() + 1
+		instanceNumber := maxInstance + 1
 		signature := arc.ARCMessageSignature{
 			InstanceNumber:   instanceNumber,
 			Algorithm:        arcAlgo,
@@ -332,15 +362,15 @@ func ARCSign(s *Session, m milter.Modifier) {
 
 		// ARC-Seal 署名
 		seal := arc.ARCSeal{
-			InstanceNumber: instanceNumber,
-			Algorithm:      arcAlgo,
-			Domain:         s.rcptToDomain,
-			Selector:       domain.ARCSelector,
-			ChainValidation: arc.ChainValidationResult(
-				s.mmauth.AuthenticationHeaders.ARCSignatures.GetVerifyResult(),
-			),
+			InstanceNumber:  instanceNumber,
+			Algorithm:       arcAlgo,
+			Domain:          s.rcptToDomain,
+			Selector:        domain.ARCSelector,
+			ChainValidation: chainValidation,
 		}
-		headers := s.mmauth.AuthenticationHeaders.ARCSignatures.GetARCHeaders()
+		// cv=fail の署名では mmauth が今回のセットだけを署名対象にする。
+		// パースできなかった受信ヘッダも含め、元のヘッダをそのまま渡す。
+		headers := append([]string(nil), s.mmauth.Headers...)
 		headers = append(headers, "ARC-Authentication-Results: "+result.String())
 		headers = append(headers, "ARC-Message-Signature: "+signature.String())
 

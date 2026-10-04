@@ -1,10 +1,47 @@
 package config
 
 import (
+	"errors"
 	"os/user"
 	"strconv"
 	"testing"
 )
+
+func TestValidateConfigARCFrom(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		headers   []string
+		wantError string
+	}{
+		{"missing list", nil, "is not set"},
+		{"missing From", []string{"To", "Subject"}, "must include From"},
+		{"From", []string{"From", "To"}, ""},
+		{"case and whitespace", []string{"  fRoM\t", "To"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := createDefaultConfig()
+			c.MilterListen.Network = "tcp"
+			c.MilterListen.Address = "127.0.0.1:10025"
+			c.PidFile.Path = "/tmp/arcmilter.pid"
+			c.ControlSocketFile.Path = "/tmp/arcmilterctl.sock"
+			c.MyNetworks = []string{"127.0.0.0/8"}
+			c.Domains = map[string]Domain{"example.jp": {ARC: true}}
+			c.DKIMSignHeaders = []string{"From"}
+			c.ARCSignHeaders = tc.headers
+			err := validateConfig(c)
+			if tc.wantError == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			var configError *ConfigError
+			if !errors.As(err, &configError) || configError.Field != "ARCSignHeaders" || configError.Message != tc.wantError {
+				t.Fatalf("unexpected configuration error: %v", err)
+			}
+		})
+	}
+}
 
 func Test_getUid(t *testing.T) {
 	testCase := []struct {

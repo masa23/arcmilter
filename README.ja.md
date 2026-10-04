@@ -102,7 +102,7 @@ DKIM署名およびARCの署名を行うmilterです。
       ARC: true
   User: mail  # milterの子プロセス実行ユーザ    デフォルト: 実行ユーザ
   Group: mail # milterの子プロセス実行グループ  デフォルト: 実行グループ
-  ARCSignHeaders: # ARC署名するヘッダ
+  ARCSignHeaders: # ARC署名するヘッダ（From は必須）
     - "DKIM-Signature"
     - "Date"
     - "From"
