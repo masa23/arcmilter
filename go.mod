@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/d--j/go-milter v0.10.3
 	github.com/k0kubun/pp/v3 v3.2.0
-	github.com/masa23/mmauth v1.0.10
+	github.com/masa23/mmauth v1.1.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
