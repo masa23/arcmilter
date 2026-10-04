@@ -1,5 +1,9 @@
 # Changelog
 
+## [v1.0.1](https://github.com/masa23/arcmilter/compare/v1.0.0...v1.0.1) - 2026-10-04
+
+- テストを強化し子プロセスを含むカバレッジ計測を追加 by @masa23 in https://github.com/masa23/arcmilter/pull/79
+
 ## [v1.0.0](https://github.com/masa23/arcmilter/compare/v0.0.29...v1.0.0) - 2026-10-04
 
 - GitHub Actions の参照を pinact で固定する by @masa23 in https://github.com/masa23/arcmilter/pull/60
