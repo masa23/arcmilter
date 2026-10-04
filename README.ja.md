@@ -162,6 +162,18 @@ UNIXソケットの場合
 smtpd_milters = unix:/var/run/arcmilter.sock
 ```
 
+## テスト
+
+```bash
+go test -race -count=1 -timeout=120s ./...
+go vet ./...
+sh scripts/test-coverage.sh
+```
+
+結合テストではUNIXソケットと子プロセスを使用します。設定再読み込みの準備完了タイムアウトも検証するため、実行には数十秒かかります。`-race` は結合テスト用の実行ファイルにも適用されます。
+
+カバレッジ計測では `go build -cover` と `GOCOVERDIR` を使い、正常終了した子プロセスの実行分も回収します。`coverage/unit.txt`、`coverage/integration.txt` にそれぞれの結果、`coverage/coverage.txt` と `coverage/coverage.html` に重複を除いて統合した結果を出力します。SIGKILLで強制終了したプロセスの未出力カウンターは回収できません。出力先はスクリプトの第1引数で変更できます。
+
 ## Thanks!
 
 以下の外部ライブラリを使用しています。

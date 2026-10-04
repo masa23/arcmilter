@@ -189,8 +189,8 @@ func Test_checkMilterListenNetwork(t *testing.T) {
 	for _, tc := range testCase {
 		t.Run(tc.name, func(t *testing.T) {
 			err := checkMilterListenNetwork(tc.network)
-			if err != nil && !tc.expectErr {
-				t.Errorf("unexpected error: %v", err)
+			if (err != nil) != tc.expectErr {
+				t.Errorf("expected error=%v, got %v", tc.expectErr, err)
 			}
 		})
 	}

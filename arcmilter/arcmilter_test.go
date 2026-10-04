@@ -28,7 +28,7 @@ func (m *signingModifier) InsertHeader(index int, name, value string) error {
 	return nil
 }
 
-func newSigningSession(t *testing.T, headers []string, key ed25519.PrivateKey) *Session {
+func newSigningSession(t *testing.T, headers []string, key crypto.Signer) *Session {
 	t.Helper()
 	auth := mmauth.NewMMAuth()
 	auth.AddBodyHash(createBodyHashConfig("relaxed", crypto.SHA256, 0))

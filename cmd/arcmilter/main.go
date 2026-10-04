@@ -325,6 +325,11 @@ func childProcess() {
 }
 
 func execChildProcess(logfd, msockfd *os.File) *os.Process {
+	childSocket, err := socketFileForChild(msockfd)
+	if err != nil {
+		log.Fatalf("Failed to duplicate socket for child process: %v", err)
+	}
+	defer childSocket.Close()
 	cmd := exec.Cmd{
 		Stdin:  os.Stdin,
 		Stdout: logfd,
@@ -333,10 +338,10 @@ func execChildProcess(logfd, msockfd *os.File) *os.Process {
 		Args:   append(os.Args, "-child"),
 		ExtraFiles: []*os.File{
 			logfd,
-			msockfd,
+			childSocket,
 		},
 	}
-	err := cmd.Start()
+	err = cmd.Start()
 	if err != nil {
 		log.Fatalf("Failed to start child process: %v", err)
 	}
@@ -358,6 +363,36 @@ func execChildProcess(logfd, msockfd *os.File) *os.Process {
 		log.Printf("child process exit pid=%d", cmd.Process.Pid)
 	}()
 	return cmd.Process
+}
+
+// net.Listener.Fileが返すFileは、Fdを呼ぶたびに共有ソケットをblockingにする。
+// ExtraFiles用に通常のFileとして複製し、既存の子のAcceptをブロックさせない。
+func socketFileForChild(socket *os.File) (*os.File, error) {
+	raw, err := socket.SyscallConn()
+	if err != nil {
+		return nil, err
+	}
+	fd := -1
+	var dupErr error
+	if err := raw.Control(func(source uintptr) {
+		// DupとCloseOnExecの間に、別のgoroutineが子を起動しないようにする。
+		syscall.ForkLock.RLock()
+		defer syscall.ForkLock.RUnlock()
+		fd, dupErr = syscall.Dup(int(source))
+		if dupErr == nil {
+			syscall.CloseOnExec(fd)
+		}
+	}); err != nil {
+		return nil, err
+	}
+	if dupErr != nil {
+		return nil, dupErr
+	}
+	if err := syscall.SetNonblock(fd, true); err != nil {
+		_ = syscall.Close(fd)
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), "milter-socket"), nil
 }
 
 func main() {

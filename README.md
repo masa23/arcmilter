@@ -161,6 +161,18 @@ For UNIX socket
 smtpd_milters = unix:/var/run/arcmilter.sock
 ```
 
+## Tests
+
+```bash
+go test -race -count=1 -timeout=120s ./...
+go vet ./...
+sh scripts/test-coverage.sh
+```
+
+Integration tests use Unix sockets and subprocesses. They also exercise the child readiness timeout during configuration reloads, so a run takes tens of seconds. The `-race` flag also instruments the executable built for integration tests.
+
+Coverage uses `go build -cover` and `GOCOVERDIR` to collect counters from subprocesses that exit normally. `coverage/unit.txt` and `coverage/integration.txt` contain separate reports; `coverage/coverage.txt` and `coverage/coverage.html` contain the combined report with duplicate functions merged. Unwritten counters from processes killed with SIGKILL cannot be collected. Pass an output directory as the script's first argument to change the destination.
+
 ## Thanks!
 
 The following external libraries are used.

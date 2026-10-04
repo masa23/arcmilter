@@ -17,5 +17,26 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.25'
-      - name: Go test
-        run: go test -v ./...
+      - name: Go vet
+        run: go vet ./...
+      - name: Go race test
+        run: go test -race -count=1 -timeout=120s ./...
+      - name: Test coverage including subprocesses
+        run: sh scripts/test-coverage.sh
+      - name: Coverage summary
+        run: |
+          for report in unit integration coverage; do
+            printf '### %s\n\n```text\n' "$report" >> "$GITHUB_STEP_SUMMARY"
+            cat "coverage/$report.txt" >> "$GITHUB_STEP_SUMMARY"
+            printf '```\n\n' >> "$GITHUB_STEP_SUMMARY"
+          done
+      - name: Upload coverage reports
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-coverage
+          path: |
+            coverage/*.out
+            coverage/*.txt
+            coverage/*.html
+          if-no-files-found: error
+          retention-days: 14

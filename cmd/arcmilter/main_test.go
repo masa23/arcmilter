@@ -3,10 +3,12 @@ package main
 import (
 	"errors"
 	"fmt"
-	"log"
 	"math/rand"
+	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -16,110 +18,221 @@ import (
 	"github.com/d--j/go-milter"
 	"github.com/masa23/mmauth/arc"
 	"github.com/masa23/mmauth/dkim"
+	"gopkg.in/yaml.v3"
 )
 
-// Testの初期化
-func TestMain(m *testing.M) {
-	// tmpディレクトリの作成
-	if err := os.MkdirAll("./t/tmp", 0755); err != nil {
-		log.Fatalf("failed to create tmp dir: %v", err)
-	}
-
-	// テスト実行
-	code := m.Run()
-
-	// tmpディレクトリの削除
-	if err := os.RemoveAll("./t/tmp"); err != nil {
-		log.Fatalf("failed to remove tmp dir: %v", err)
-	}
-
-	// テストコードに応じた終了コードを返す
-	os.Exit(code)
+type execTest struct {
+	dir      string
+	cmd      *exec.Cmd
+	done     chan struct{}
+	waitErr  error // doneを閉じた後にだけ参照する
+	stopped  bool
+	coverDir string
+	childPID int
 }
 
-var testExecCmd *exec.Cmd
-
 var testCreateFile = []struct {
-	path       string
+	name       string
 	permission os.FileMode
 	stopExist  bool
 }{
 	{
-		path:       "./t/tmp/arcmilter.log",
+		name:       "arcmilter.log",
 		permission: 0600,
 		stopExist:  true,
 	},
 	{
-		path:       "./t/tmp/arcmilter.pid",
+		name:       "arcmilter.pid",
 		permission: 0644,
 		stopExist:  false,
 	},
 	{
-		path:       "./t/tmp/arcmilter.sock",
+		name:       "arcmilter.sock",
 		permission: 0600,
 		stopExist:  true,
 	},
 	{
-		path:       "./t/tmp/arcmilterctl.sock",
+		name:       "arcmilterctl.sock",
 		permission: 0600,
 		stopExist:  true,
 	},
 }
 
 func TestExec(t *testing.T) {
-	t.Run("build", testBuild)
-	t.Run("version", testVersion)
-	t.Run("exec", testExec)
-	t.Run("milter", testMilter)
-	t.Run("stop", testStop)
+	// UNIXソケットのパス長制限を超えないよう、TMPDIRに依存しない短いパスを使う。
+	dir, err := os.MkdirTemp("/tmp", "arcmilter-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Errorf("failed to remove test directory: %v", err)
+		}
+	})
+	f := &execTest{dir: dir}
+	if dir := os.Getenv("ARCMILTER_TEST_COVERDIR"); dir != "" {
+		var err error
+		f.coverDir, err = filepath.Abs(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(f.coverDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		f.stop(t)
+		if t.Failed() {
+			for _, name := range []string{"arcmilter.log", "output.log"} {
+				if buf, err := os.ReadFile(filepath.Join(f.dir, name)); err == nil {
+					t.Logf("%s:\n%s", name, buf)
+				}
+			}
+		}
+	})
+	if !t.Run("build", f.build) || !t.Run("version", f.version) || !t.Run("exec", f.start) {
+		return
+	}
+	t.Run("milter", func(t *testing.T) { testMilter(t, filepath.Join(f.dir, "arcmilter.sock")) })
+	// 最初の子を正常終了させ、Milterの全ケースのカウンターを回収してから強制終了を検証する。
+	if !t.Run("reload", f.reload) || !t.Run("restart", f.restart) || !t.Run("reload-invalid", f.reloadInvalid) || !t.Run("reload-timeout", f.reloadTimeout) {
+		return
+	}
+	t.Run("stop", func(t *testing.T) {
+		f.stop(t)
+		for _, file := range testCreateFile {
+			path := filepath.Join(f.dir, file.name)
+			_, err := os.Stat(path)
+			if file.stopExist && err != nil {
+				t.Errorf("file not found: %s: %v", path, err)
+			} else if !file.stopExist && !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("expected file removal: %s: %v", path, err)
+			}
+		}
+	})
 }
 
-func testBuild(t *testing.T) {
-	cmd := exec.Command("go", "build", "-o", "./t/tmp/arcmilter", ".")
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("failed to build arcmilter: %v", err)
+func (f *execTest) build(t *testing.T) {
+	args := []string{"build"}
+	if testRaceEnabled {
+		args = append(args, "-race")
+	}
+	if f.coverDir != "" {
+		args = append(args, "-cover", "-covermode=atomic", "-coverpkg=github.com/masa23/arcmilter/...")
+	}
+	args = append(args, "-o", filepath.Join(f.dir, "arcmilter"), ".")
+	cmd := exec.Command("go", args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build arcmilter: %v\n%s", err, out)
 	}
 }
 
-func testVersion(t *testing.T) {
-	cmd := exec.Command("./t/tmp/arcmilter", "-version")
+func (f *execTest) version(t *testing.T) {
+	cmd := exec.Command(filepath.Join(f.dir, "arcmilter"), "-version")
+	if f.coverDir != "" {
+		cmd.Env = append(os.Environ(), "GOCOVERDIR="+f.coverDir)
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("failed to get version: %v", err)
 	}
-	t.Logf("version: %s", out)
+	if got, want := string(out), "arcmilter version "+version+"\n"; got != want {
+		t.Fatalf("version: got %q, want %q", got, want)
+	}
 }
 
-func testExec(t *testing.T) {
-	testExecCmd = exec.Command("./t/tmp/arcmilter", "-conf", "t/test.yaml")
-	if err := testExecCmd.Start(); err != nil {
+func (f *execTest) start(t *testing.T) {
+	buf, err := os.ReadFile("t/test.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var conf map[string]interface{}
+	if err := yaml.Unmarshal(buf, &conf); err != nil {
+		t.Fatal(err)
+	}
+	for section, file := range map[string]string{
+		"MilterListen": "arcmilter.sock", "ControlSocketFile": "arcmilterctl.sock",
+		"PIDFile": "arcmilter.pid", "LogFile": "arcmilter.log",
+	} {
+		field := "Path"
+		if section == "MilterListen" {
+			field = "Address"
+		}
+		conf[section].(map[string]interface{})[field] = filepath.Join(f.dir, file)
+	}
+	keyPath, err := filepath.Abs("t/key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conf["Domains"].(map[string]interface{})["example.jp"].(map[string]interface{})["PrivateKeyFile"] = keyPath
+	buf, err = yaml.Marshal(conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	confPath := filepath.Join(f.dir, "test.yaml")
+	if err := os.WriteFile(confPath, buf, 0600); err != nil {
+		t.Fatal(err)
+	}
+	output, err := os.Create(filepath.Join(f.dir, "output.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer output.Close()
+	f.cmd = exec.Command(filepath.Join(f.dir, "arcmilter"), "-conf", confPath)
+	f.cmd.Stdout, f.cmd.Stderr = output, output
+	if f.coverDir != "" {
+		f.cmd.Env = append(os.Environ(), "GOCOVERDIR="+f.coverDir)
+	}
+	// 異常終了時も、このテストで起動した子プロセスだけを終了できるようにする。
+	f.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := f.cmd.Start(); err != nil {
 		t.Fatalf("failed to start arcmilter: %v", err)
 	}
-	// 起動待ち
-	time.Sleep(500 * time.Millisecond)
+	f.done = make(chan struct{})
+	go func() {
+		f.waitErr = f.cmd.Wait()
+		close(f.done)
+	}()
 
-	// プロセスが存在するか確認
-	if testExecCmd.Process == nil {
-		t.Fatalf("arcmilter process not running")
+	// ソケットの作成だけでなく、Milterのネゴシエーション完了まで待つ。
+	client := milter.NewClient("unix", filepath.Join(f.dir, "arcmilter.sock"),
+		milter.WithDialer(&net.Dialer{Timeout: 100 * time.Millisecond}),
+		milter.WithReadTimeout(100*time.Millisecond), milter.WithWriteTimeout(100*time.Millisecond))
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		select {
+		case <-f.done:
+			t.Fatalf("arcmilter exited before readiness: %v", f.waitErr)
+		default:
+		}
+		session, err := client.Session(nil)
+		if err == nil {
+			if err := session.Close(); err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for milter: %v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	if err := testExecCmd.Process.Signal(syscall.Signal(0)); err != nil {
-		t.Fatalf("arcmilter process not running: %v", err)
-	}
+	f.childPID = f.waitLogPID(t, "child process ready", 0)
 
 	// ファイルの作成とパーミッションの確認
-	for _, f := range testCreateFile {
-		info, err := os.Stat(f.path)
+	for _, file := range testCreateFile {
+		info, err := os.Stat(filepath.Join(f.dir, file.name))
 		if err != nil {
-			t.Fatalf("failed to stat %s: %v", f.path, err)
+			t.Fatalf("failed to stat %s: %v", file.name, err)
 		}
-		if info.Mode().Perm() != f.permission {
-			t.Fatalf("unexpected permission %s: %v", f.path, info.Mode().Perm())
+		if info.Mode().Perm() != file.permission {
+			t.Fatalf("unexpected permission %s: %v", file.name, info.Mode().Perm())
 		}
 	}
 }
 
-func testMilter(t *testing.T) {
-	client := milter.NewClient("unix", "./t/tmp/arcmilter.sock")
+func testMilter(t *testing.T, socketPath string) {
+	client := milter.NewClient("unix", socketPath)
 	globalMacros := milter.NewMacroBag()
 	globalMacros.Set(milter.MacroMTAFQDN, "example.jp")
 	globalMacros.Set(milter.MacroMTAPid, strconv.Itoa(os.Getpid()))
@@ -279,8 +392,13 @@ func testMilter(t *testing.T) {
 			macros := globalMacros.Copy()
 			session, err := client.Session(macros)
 			if err != nil {
-				log.Fatalf("failed to create milter session: %v", err)
+				t.Fatalf("failed to create milter session: %v", err)
 			}
+			t.Cleanup(func() {
+				if err := session.Close(); err != nil {
+					t.Errorf("failed to close milter session: %v", err)
+				}
+			})
 			handleMilterResponse := func(act *milter.Action, err error) {
 				if err != nil {
 					t.Fatalf("failed to handle milter response: %v", err)
@@ -423,6 +541,9 @@ func testMilter(t *testing.T) {
 						if !strings.EqualFold(d.AuthServId, e.AuthServId) {
 							t.Fatalf("domain mismatch: %s != %s", d.AuthServId, e.AuthServId)
 						}
+						if len(d.Results) != len(e.Results) {
+							t.Fatalf("result count mismatch: %d != %d", len(d.Results), len(e.Results))
+						}
 						for i, r := range d.Results {
 							if !strings.EqualFold(r, e.Results[i]) {
 								t.Fatalf("result mismatch: %s != %s", r, e.Results[i])
@@ -456,51 +577,268 @@ func testMilter(t *testing.T) {
 					}
 				}
 			}
-			session.Close()
 		})
 	}
 }
 
-func testStop(t *testing.T) {
-	defer func() {
-		// テスト終了時に強制終了
-		testExecCmd.Process.Signal(syscall.SIGKILL)
-	}()
-	if testExecCmd.Process != nil {
-		if err := testExecCmd.Process.Signal(syscall.SIGTERM); err != nil {
-			t.Fatalf("failed to kill arcmilter: %v", err)
-		}
-		if err := testExecCmd.Wait(); err != nil {
-			t.Fatalf("failed to wait arcmilter: %v", err)
-		}
+func (f *execTest) stop(t *testing.T) {
+	t.Helper()
+	if f.cmd == nil || f.cmd.Process == nil || f.stopped {
+		return
 	}
-
-	// 終了後のファイルの確認
-	for _, f := range testCreateFile {
-		_, err := os.Stat(f.path)
-		if f.stopExist {
-			if err != nil {
-				t.Fatalf("file not found: %s", f.path)
-			}
-		} else {
-			if err == nil {
-				t.Fatalf("file exists: %s", f.path)
+	f.stopped = true
+	// 親プロセスが先に終了していても、残った子プロセスを回収する。
+	defer syscall.Kill(-f.cmd.Process.Pid, syscall.SIGKILL)
+	if err := f.cmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		t.Errorf("failed to stop arcmilter process group: %v", err)
+	}
+	if f.coverDir != "" && f.childPID != 0 {
+		f.waitCoverage(t, f.childPID)
+	}
+	select {
+	case <-f.done:
+		if f.waitErr != nil {
+			t.Errorf("arcmilter exited with error: %v", f.waitErr)
+		}
+	case <-time.After(10 * time.Second):
+		_ = syscall.Kill(-f.cmd.Process.Pid, syscall.SIGKILL)
+		select {
+		case <-f.done:
+		case <-time.After(5 * time.Second):
+			t.Errorf("timed out reaping arcmilter")
+		}
+		t.Errorf("timed out stopping arcmilter")
+	}
+	if testRaceEnabled {
+		for _, name := range []string{"arcmilter.log", "output.log"} {
+			if buf, err := os.ReadFile(filepath.Join(f.dir, name)); err == nil && strings.Contains(string(buf), "WARNING: DATA RACE") {
+				t.Errorf("race detected in arcmilter:\n%s", buf)
 			}
 		}
 	}
 }
 
-func Test_checkPidFile(t *testing.T) {
-	pidFile := "test.pid"
+func (f *execTest) waitCoverage(t *testing.T, pid int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		matches, err := filepath.Glob(filepath.Join(f.coverDir, fmt.Sprintf("covcounters.*.%d.*", pid)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(matches) > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Errorf("no coverage counters from child %d", pid)
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func (f *execTest) logOffset(t *testing.T) int {
+	t.Helper()
+	buf, err := os.ReadFile(filepath.Join(f.dir, "arcmilter.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(buf)
+}
+
+func (f *execTest) waitLogPID(t *testing.T, event string, offset int) int {
+	t.Helper()
+	pattern := regexp.MustCompile(regexp.QuoteMeta(event) + ` pid=(\d+)`)
+	var pid int
+	f.waitLog(t, offset, func(log string) bool {
+		match := pattern.FindStringSubmatch(log)
+		if match == nil {
+			return false
+		}
+		pid, _ = strconv.Atoi(match[1])
+		return true
+	})
+	return pid
+}
+
+func (f *execTest) waitLog(t *testing.T, offset int, found func(string) bool) {
+	t.Helper()
+	deadline := time.Now().Add(childReadyTimeout + 10*time.Second)
+	for {
+		buf, err := os.ReadFile(filepath.Join(f.dir, "arcmilter.log"))
+		if err == nil && len(buf) >= offset && found(string(buf[offset:])) {
+			return
+		}
+		select {
+		case <-f.done:
+			t.Fatalf("arcmilter exited while waiting for event: %v\n%s", f.waitErr, buf)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for process event:\n%s", buf)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func (f *execTest) restart(t *testing.T) {
+	offset, oldPID := f.logOffset(t), f.childPID
+	if err := syscall.Kill(oldPID, syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	f.childPID = f.waitLogPID(t, "child process ready", offset)
+	if f.childPID == oldPID {
+		t.Fatal("child was not replaced after abnormal exit")
+	}
+	f.checkSelector(t, "reloaded")
+}
+
+func (f *execTest) reload(t *testing.T) {
+	path := filepath.Join(f.dir, "test.yaml")
+	buf, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c map[string]interface{}
+	if err := yaml.Unmarshal(buf, &c); err != nil {
+		t.Fatal(err)
+	}
+	c["Domains"].(map[string]interface{})["example.jp"].(map[string]interface{})["Selector"] = "reloaded"
+	buf, err = yaml.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, buf, 0600); err != nil {
+		t.Fatal(err)
+	}
+	offset, oldPID := f.logOffset(t), f.childPID
+	if err := f.cmd.Process.Signal(syscall.SIGHUP); err != nil {
+		t.Fatal(err)
+	}
+	f.childPID = f.waitLogPID(t, "child process ready", offset)
+	if f.childPID == oldPID {
+		t.Fatal("reload did not start a new child")
+	}
+	f.waitLog(t, offset, func(log string) bool { return strings.Contains(log, fmt.Sprintf("child process exit pid=%d", oldPID)) })
+	if f.coverDir != "" {
+		f.waitCoverage(t, oldPID)
+	}
+	f.checkSelector(t, "reloaded")
+}
+
+func (f *execTest) reloadInvalid(t *testing.T) {
+	path := filepath.Join(f.dir, "test.yaml")
+	valid, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.WriteFile(path, valid, 0600); err != nil {
+			t.Error(err)
+		}
+	})
+	if err := os.WriteFile(path, []byte("MilterListen: ["), 0600); err != nil {
+		t.Fatal(err)
+	}
+	offset := f.logOffset(t)
+	if err := f.cmd.Process.Signal(syscall.SIGHUP); err != nil {
+		t.Fatal(err)
+	}
+	f.waitLog(t, offset, func(log string) bool { return strings.Contains(log, "failed to load config:") })
+	// 新しい子も設定を読めないためタイムアウトする。旧プロセスは処理を継続する。
+	f.waitLog(t, offset, func(log string) bool { return strings.Contains(log, "timed out waiting for child process readiness") })
+	f.checkSelector(t, "reloaded")
+}
+
+func (f *execTest) reloadTimeout(t *testing.T) {
+	binary := filepath.Join(f.dir, "arcmilter")
+	realBinary := binary + ".real"
+	if err := os.Rename(binary, realBinary); err != nil {
+		t.Fatal(err)
+	}
+	restored := false
+	restore := func() {
+		if !restored {
+			if err := os.Rename(realBinary, binary); err != nil {
+				t.Error(err)
+				return
+			}
+			restored = true
+		}
+	}
+	t.Cleanup(restore)
+	// 再読み込み時だけ、準備完了を通知しない子プロセスを起動する。
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nexec sleep 60\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	offset, oldPID := f.logOffset(t), f.childPID
+	if err := f.cmd.Process.Signal(syscall.SIGHUP); err != nil {
+		t.Fatal(err)
+	}
+	stalledPID := f.waitLogPID(t, "child process started", offset)
+	f.waitLog(t, offset, func(log string) bool { return strings.Contains(log, "timed out waiting for child process readiness") })
+	f.waitLog(t, offset, func(log string) bool {
+		return strings.Contains(log, fmt.Sprintf("child process exit pid=%d", stalledPID))
+	})
+	f.checkSelector(t, "reloaded")
+	if err := syscall.Kill(oldPID, 0); err != nil {
+		t.Fatalf("old child stopped after readiness timeout: %v", err)
+	}
+	restore()
+	// タイムアウト後でも、次の正常な再読み込みを完了できる。
+	f.reload(t)
+}
+
+func (f *execTest) checkSelector(t *testing.T, selector string) {
+	t.Helper()
+	client := milter.NewClient("unix", filepath.Join(f.dir, "arcmilter.sock"))
+	session, err := client.Session(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer func() {
-		if err := os.Remove(pidFile); err != nil && !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("failed to remove pid file: %v", err)
+		if err := session.Close(); err != nil {
+			t.Error(err)
 		}
 	}()
-	// remove pid file
-	if err := os.Remove(pidFile); err != nil && !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("failed to remove pid file: %v", err)
+	check := func(action *milter.Action, err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if action.StopProcessing() || action.Type == milter.ActionDiscard {
+			t.Fatalf("unexpected action: %v", action)
+		}
 	}
+	check(session.Conn("localhost", milter.FamilyInet, 25, "127.0.0.1"))
+	check(session.Helo("localhost"))
+	check(session.Mail("<a@example.jp>", ""))
+	check(session.Rcpt("<a@outside.example>", ""))
+	check(session.DataStart())
+	check(session.HeaderField("From", "a@example.jp", nil))
+	check(session.HeaderField("To", "a@outside.example", nil))
+	check(session.HeaderEnd())
+	mods, action, err := session.BodyReadFrom(strings.NewReader("reload body\r\n"))
+	check(action, err)
+	count := 0
+	for _, mod := range mods {
+		if strings.EqualFold(mod.HeaderName, "DKIM-Signature") {
+			count++
+			sig, err := dkim.ParseSignature(mod.HeaderName + ": " + mod.HeaderValue)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if sig.Selector != selector {
+				t.Fatalf("got selector %q, want %q", sig.Selector, selector)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected one DKIM signature after process transition, got %d", count)
+	}
+}
+
+func Test_checkPidFile(t *testing.T) {
 	testCases := []struct {
 		name      string
 		fileExist bool
@@ -542,6 +880,7 @@ func Test_checkPidFile(t *testing.T) {
 
 	for _, tt := range testCases {
 		t.Run(tt.name, func(t *testing.T) {
+			pidFile := filepath.Join(t.TempDir(), "test.pid")
 			if tt.fileExist {
 				pidStr := tt.pidStr
 
@@ -553,7 +892,7 @@ func Test_checkPidFile(t *testing.T) {
 					} else {
 						for {
 							randPid := rand.Intn(9000) + 1000
-							if err := syscall.Kill(randPid, 0); err == nil {
+							if err := syscall.Kill(randPid, 0); !errors.Is(err, syscall.ESRCH) {
 								continue
 							}
 							pidStr = strconv.Itoa(randPid)
