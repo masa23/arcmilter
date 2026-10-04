@@ -65,7 +65,7 @@ MyNetworks:
   - ::1/128
 User: mail
 Group: mail
-ARCSignHeaders:
+ARCSignHeaders: # From は必須
   - "DKIM-Signature"
   - "Date"
   - "From"

@@ -101,7 +101,7 @@ I welcome feedback and pull requests.
       ARC: true
   User: mail  # User to run the milter
   Group: mail # Group to run the milter
-  ARCSignHeaders: # Headers to sign with ARC
+  ARCSignHeaders: # Headers to sign with ARC (From is required)
     - "DKIM-Signature"
     - "Date"
     - "From"

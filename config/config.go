@@ -320,6 +320,16 @@ func validateConfig(config *Config) error {
 	if len(config.ARCSignHeaders) == 0 {
 		return &ConfigError{Field: "ARCSignHeaders", Message: "is not set"}
 	}
+	fromSigned := false
+	for _, name := range config.ARCSignHeaders {
+		if strings.EqualFold(strings.TrimSpace(name), "From") {
+			fromSigned = true
+			break
+		}
+	}
+	if !fromSigned {
+		return &ConfigError{Field: "ARCSignHeaders", Message: "must include From"}
+	}
 
 	return nil
 }
