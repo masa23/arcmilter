@@ -4,6 +4,8 @@
 * [English](README.md)
 
 A milter that performs DKIM and ARC signatures.  
+It uses [mmauth](https://github.com/masa23/mmauth) for DKIM and ARC signing and verification, as well as email authentication processing.
+
 I intended to comply with [RFC6376](https://datatracker.ietf.org/doc/html/rfc6376) and [RFC8617](https://datatracker.ietf.org/doc/html/rfc8617), but since it is designed for personal use, thorough testing is needed for actual operation.  
 I welcome feedback and pull requests.
 
@@ -164,9 +166,6 @@ smtpd_milters = unix:/var/run/arcmilter.sock
 The following external libraries are used.
 
   * [d--j/go-milter](https://github.com/d--j/go-milter)
+  * [masa23/mmauth](https://github.com/masa23/mmauth)
   * [k0kubun/pp](https://github.com/k0kubun/pp)
   * [yaml.v3](https://gopkg.in/yaml.v3)
-
-The following library was used as a reference during production.
-
-  * [emersion/go-msgauth](https://github.com/emersion/go-msgauth/)
