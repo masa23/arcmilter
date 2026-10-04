@@ -1,5 +1,25 @@
 # Changelog
 
+## [v1.0.0](https://github.com/masa23/arcmilter/compare/v0.0.29...v1.0.0) - 2026-10-04
+
+- GitHub Actions の参照を pinact で固定する by @masa23 in https://github.com/masa23/arcmilter/pull/60
+- mainへのpushでもpinact検証を実行する by @masa23 in https://github.com/masa23/arcmilter/pull/62
+- pinactを全PRで実行して必須チェック化に備える by @masa23 in https://github.com/masa23/arcmilter/pull/63
+- GitHub ActionsをDependabotで定期更新する by @masa23 in https://github.com/masa23/arcmilter/pull/64
+- 任意階層のローカルActionをpinactの検査対象にする by @masa23 in https://github.com/masa23/arcmilter/pull/68
+- ローカルActionのDependabot更新範囲を検証する by @masa23 in https://github.com/masa23/arcmilter/pull/69
+- Bump actions/setup-go from 5.6.0 to 7.0.0 by @dependabot[bot] in https://github.com/masa23/arcmilter/pull/65
+- Bump actions/checkout from 4.4.0 to 7.0.1 by @dependabot[bot] in https://github.com/masa23/arcmilter/pull/66
+- Bump goreleaser/goreleaser-action from 6.4.0 to 7.2.3 by @dependabot[bot] in https://github.com/masa23/arcmilter/pull/67
+- Bump Songmu/tagpr from 1.20.1 to 1.20.3 by @dependabot[bot] in https://github.com/masa23/arcmilter/pull/71
+- go-milterをv0.10.3に更新 by @masa23 in https://github.com/masa23/arcmilter/pull/72
+- Bump Songmu/tagpr from 1.20.3 to 1.21.0 by @dependabot[bot] in https://github.com/masa23/arcmilter/pull/73
+- mmauthをv1.1.0に更新 by @masa23 in https://github.com/masa23/arcmilter/pull/74
+- mmauth更新後のDKIM・ARC署名処理を修正 by @masa23 in https://github.com/masa23/arcmilter/pull/75
+- mmauthをv1.1.1に更新 by @masa23 in https://github.com/masa23/arcmilter/pull/76
+- Linuxのリリース対象をamd64・arm64に限定してビルド失敗を解消 by @masa23 in https://github.com/masa23/arcmilter/pull/77
+- READMEにmmauthの使用を明記し、v1.0.0リリースを準備 by @masa23 in https://github.com/masa23/arcmilter/pull/78
+
 ## [v0.0.29](https://github.com/masa23/arcmilter/compare/v0.0.28...v0.0.29) - 2026-06-23
 
 - 設定読み込みを整理し署名処理のガードを追加 by @masa23 in https://github.com/masa23/arcmilter/pull/57
