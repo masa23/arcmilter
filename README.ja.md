@@ -4,6 +4,8 @@
 * [English](README.md)
 
 DKIM署名およびARCの署名を行うmilterです。  
+DKIM・ARCの署名と検証、およびメール認証処理には [mmauth](https://github.com/masa23/mmauth) を使用しています。
+
 [RFC6376](https://datatracker.ietf.org/doc/html/rfc6376)、[RFC8617](https://datatracker.ietf.org/doc/html/rfc8617)に準拠させたつもりですが、  
 個人での利用を想定しているため、実際の運用には十分なテストが必要です。  
 フィードバックやプルリクエストをお待ちしています。
@@ -165,9 +167,6 @@ smtpd_milters = unix:/var/run/arcmilter.sock
 以下の外部ライブラリを使用しています。
 
   * [d--j/go-milter](https://github.com/d--j/go-milter)
+  * [masa23/mmauth](https://github.com/masa23/mmauth)
   * [k0kubun/pp](https://github.com/k0kubun/pp)
   * [yaml.v3](https://gopkg.in/yaml.v3)
-
-以下のライブラリは制作に当たって参考にさせていただきました。
-
-  * [emersion/go-msgauth](https://github.com/emersion/go-msgauth/)
