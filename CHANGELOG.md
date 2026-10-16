@@ -1,5 +1,11 @@
 # Changelog
 
+## [v1.0.2](https://github.com/masa23/arcmilter/compare/v1.0.1...v1.0.2) - 2026-10-16
+
+- chore(deps): bump Songmu/tagpr from 1.21.0 to 1.21.1 by @dependabot[bot] in https://github.com/masa23/arcmilter/pull/81
+- chore(deps): bump actions/upload-artifact from 4.6.2 to 7.0.1 by @dependabot[bot] in https://github.com/masa23/arcmilter/pull/82
+- chore(deps): bump Songmu/tagpr from 1.21.1 to 1.21.2 by @dependabot[bot] in https://github.com/masa23/arcmilter/pull/84
+
 ## [v1.0.1](https://github.com/masa23/arcmilter/compare/v1.0.0...v1.0.1) - 2026-10-04
 
 - テストを強化し子プロセスを含むカバレッジ計測を追加 by @masa23 in https://github.com/masa23/arcmilter/pull/79
