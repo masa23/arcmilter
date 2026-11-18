@@ -1,15 +1,20 @@
 package control
 
 import (
-	"log"
+	"errors"
+	"fmt"
 	"net"
 	"net/rpc"
+	"os"
+	"syscall"
 )
 
-// Control はRPCのレシーバとして動作し、子プロセスが準備完了したことを通知するための機能を提供します
+// Control serves child readiness notifications on a private Unix socket.
 type Control struct {
 	childReady func(pid int)
 }
+
+const maxControlConnections = 16
 
 func New(childReady func(pid int)) *Control {
 	return &Control{
@@ -18,17 +23,56 @@ func New(childReady func(pid int)) *Control {
 }
 
 func (c *Control) Serve(l net.Listener) error {
-	if err := rpc.Register(c); err != nil {
-		log.Fatalf("failed to register control: %v", err)
-	}
-
+	slots := make(chan struct{}, maxControlConnections)
 	for {
 		conn, err := l.Accept()
 		if err != nil {
-			log.Fatalf("failed to accept control socket: %v", err)
+			return err
 		}
-		go rpc.ServeConn(conn)
+		peer, err := controlPeerCredentials(conn)
+		if err != nil || peer == nil || peer.Uid != uint32(os.Geteuid()) || peer.Pid <= 0 {
+			_ = conn.Close()
+			continue
+		}
+		select {
+		case slots <- struct{}{}:
+		default:
+			_ = conn.Close()
+			continue
+		}
+		server := rpc.NewServer()
+		if err := server.RegisterName("Control", &peerControl{childReady: c.childReady, pid: int(peer.Pid)}); err != nil {
+			<-slots
+			_ = conn.Close()
+			return fmt.Errorf("register control RPC: %w", err)
+		}
+		go func() {
+			defer func() { <-slots }()
+			server.ServeConn(conn)
+		}()
 	}
+}
+
+func controlPeerCredentials(conn net.Conn) (*syscall.Ucred, error) {
+	unixConn, ok := conn.(*net.UnixConn)
+	if !ok {
+		return nil, errors.New("control connection is not a Unix socket")
+	}
+	raw, err := unixConn.SyscallConn()
+	if err != nil {
+		return nil, err
+	}
+	var peer *syscall.Ucred
+	var socketErr error
+	if err := raw.Control(func(fd uintptr) {
+		peer, socketErr = syscall.GetsockoptUcred(int(fd), syscall.SOL_SOCKET, syscall.SO_PEERCRED)
+	}); err != nil {
+		return nil, err
+	}
+	if socketErr != nil {
+		return nil, socketErr
+	}
+	return peer, nil
 }
 
 // ChildReadyArgs は子プロセスが準備完了したことを通知するための引数を表します
@@ -36,9 +80,18 @@ type ChildReadyArgs struct {
 	Pid int
 }
 
-// ChildReady は子プロセスが準備完了したことを通知するためのメソッドです
-// 事前に指定したhook関数を実行します
-func (c *Control) ChildReady(args ChildReadyArgs, reply *struct{}) error {
-	c.childReady(args.Pid)
+type peerControl struct {
+	childReady func(pid int)
+	pid        int
+}
+
+// ChildReady accepts only the PID supplied by the Unix kernel for this RPC
+// connection. A process with access to the socket cannot claim that a
+// replacement child has finished starting.
+func (c *peerControl) ChildReady(args ChildReadyArgs, reply *struct{}) error {
+	if args.Pid != c.pid {
+		return fmt.Errorf("control ready PID %d does not match peer PID", args.Pid)
+	}
+	c.childReady(c.pid)
 	return nil
 }
