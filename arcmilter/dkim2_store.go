@@ -36,6 +36,7 @@ var (
 	errDKIM2CacheExpired    = errors.New("DKIM2 forwarding context expired")
 	errDKIM2CacheCapacity   = errors.New("DKIM2 context store capacity exceeded")
 	errDKIM2ContextMetadata = errors.New("invalid DKIM2 context metadata")
+	errDKIM2FileUnlinked    = errors.New("DKIM2 store file was unlinked after opening")
 )
 
 // 使用量は全プロセスが同じ Flock の下で更新する。操作前の Dirty を永続化し、
@@ -290,24 +291,37 @@ func openDKIM2ContextFile(path string, flags int) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	info, err := file.Stat()
-	if err != nil {
+	if err := validateOpenedDKIM2ContextFile(file, truncate); err != nil {
 		_ = file.Close()
 		return nil, err
 	}
+	return file, nil
+}
+
+func validateOpenedDKIM2ContextFile(file *os.File, truncate bool) error {
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || !ok ||
-		stat.Uid != uint32(os.Geteuid()) || stat.Nlink != 1 {
-		_ = file.Close()
-		return nil, errors.New("DKIM2 context file must be a private regular file owned by the service user without hard links (0600)")
+		stat.Uid != uint32(os.Geteuid()) {
+		return errors.New("DKIM2 context file must be a private regular file owned by the service user without hard links (0600)")
+	}
+	// Eviction can unlink a file between OpenFile and Stat. A missing inode
+	// name is distinct from an unsafe inode with multiple hard links.
+	if stat.Nlink == 0 {
+		return errDKIM2FileUnlinked
+	}
+	if stat.Nlink != 1 {
+		return errors.New("DKIM2 context file must be a private regular file owned by the service user without hard links (0600)")
 	}
 	if truncate {
 		if err := file.Truncate(0); err != nil {
-			_ = file.Close()
-			return nil, err
+			return err
 		}
 	}
-	return file, nil
+	return nil
 }
 
 func readDKIM2ContextMetadata(reader *bufio.Reader) (dkim2ContextMetadata, int, error) {
@@ -928,6 +942,13 @@ func removeDKIM2ForwardContext(options config.DKIM2ForwardingConfig, id string) 
 	return writeDKIM2StoreState(options, state)
 }
 
+func dkim2ContextOpenError(err error) error {
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, errDKIM2FileUnlinked) {
+		return fmt.Errorf("%w: %w", errDKIM2CacheMiss, err)
+	}
+	return err
+}
+
 func loadDKIM2ForwardContext(options config.DKIM2ForwardingConfig, id string) (*dkim2ForwardContext, error) {
 	if !validDKIM2ContextID(id) {
 		return nil, errors.New("invalid DKIM2 context ID")
@@ -944,10 +965,7 @@ func loadDKIM2ForwardContext(options config.DKIM2ForwardingConfig, id string) (*
 	}
 	file, err := openDKIM2ContextFile(filepath.Join(options.StoreDirectory, id+".ctx"), os.O_RDONLY)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("%w: %w", errDKIM2CacheMiss, err)
-		}
-		return nil, err
+		return nil, dkim2ContextOpenError(err)
 	}
 	defer file.Close()
 	reader := bufio.NewReaderSize(file, dkim2ContextMetadataLimit+1)

@@ -37,6 +37,46 @@ func saveDKIM2StoreFixture(t testing.TB, options config.DKIM2ForwardingConfig, e
 	return id
 }
 
+func TestDKIM2ForwardStoreUnlinkedAfterOpenIsCacheMiss(t *testing.T) {
+	options, envelope, raw := dkim2StoreFixture(t)
+	id := saveDKIM2StoreFixture(t, options, envelope, raw)
+	path := filepath.Join(options.StoreDirectory, id+".ctx")
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	// Force the eviction interleaving: the reader has an open descriptor,
+	// then the writer removes its name before the reader validates Nlink.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	err = validateOpenedDKIM2ContextFile(file, false)
+	if !errors.Is(err, errDKIM2FileUnlinked) {
+		t.Fatalf("unlinked open descriptor: %v", err)
+	}
+	err = dkim2ContextOpenError(err)
+	if !errors.Is(err, errDKIM2CacheMiss) || !isDKIM2CacheAvailabilityError(err) {
+		t.Fatalf("concurrent eviction must be a skippable cache miss: %v", err)
+	}
+}
+
+func TestDKIM2ForwardStoreHardLinkedContextIsUnsafe(t *testing.T) {
+	options, envelope, raw := dkim2StoreFixture(t)
+	id := saveDKIM2StoreFixture(t, options, envelope, raw)
+	path := filepath.Join(options.StoreDirectory, id+".ctx")
+	if err := os.Link(path, path+".link"); err != nil {
+		t.Fatal(err)
+	}
+	file, err := openDKIM2ContextFile(path, os.O_RDONLY)
+	if file != nil {
+		file.Close()
+	}
+	if err == nil || errors.Is(dkim2ContextOpenError(err), errDKIM2CacheMiss) {
+		t.Fatalf("hard-linked context was treated as a cache miss: %v", err)
+	}
+}
+
 func TestDKIM2ForwardStoreRollbackReleasesOnlyNewContext(t *testing.T) {
 	options, envelope, raw := dkim2StoreFixture(t)
 	kept := saveDKIM2StoreFixture(t, options, envelope, raw)
