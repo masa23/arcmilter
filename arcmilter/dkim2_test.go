@@ -13,6 +13,7 @@ import (
 	"errors"
 	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/d--j/go-milter"
@@ -56,8 +57,9 @@ func dkim2KeyRecords(t *testing.T, key crypto.Signer) dkim2Records {
 }
 
 // DKIM2の既定リゾルバはnet.DefaultResolverを使うため、ローカルでTXTだけを返す。
-func useDKIM2DNS(t *testing.T, records dkim2Records) {
+func useDKIM2DNS(t *testing.T, records dkim2Records) *atomic.Int64 {
 	t.Helper()
+	queries := &atomic.Int64{}
 	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -92,6 +94,7 @@ func useDKIM2DNS(t *testing.T, records dkim2Records) {
 			}
 			var answers []string
 			if binary.BigEndian.Uint16(buffer[offset:]) == 16 {
+				queries.Add(1)
 				answers = records[strings.Join(labels, ".")]
 			}
 			response := []byte{buffer[0], buffer[1], 0x81, 0x80, 0, 1, 0, byte(len(answers)), 0, 0, 0, 0}
@@ -120,6 +123,7 @@ func useDKIM2DNS(t *testing.T, records dkim2Records) {
 		_ = conn.Close()
 		<-done
 	})
+	return queries
 }
 
 func newDKIM2Session(t *testing.T, key crypto.Signer, verify, sign bool) (*Session, *messageModifier) {

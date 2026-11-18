@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 
@@ -73,13 +74,14 @@ func (m *dkim2ForwardModifier) wire() []byte {
 }
 
 type dkim2ForwardFixture struct {
-	key      ed25519.PrivateKey
-	records  dkim2Records
-	store    string
-	incoming dkim2.Envelope
-	original []byte
-	received []byte
-	id       string
+	key        ed25519.PrivateKey
+	records    dkim2Records
+	store      string
+	incoming   dkim2.Envelope
+	original   []byte
+	received   []byte
+	id         string
+	dnsQueries *atomic.Int64
 }
 
 func newDKIM2ForwardFixture(t *testing.T, nullSender bool) *dkim2ForwardFixture {
@@ -100,7 +102,7 @@ func newDKIM2ForwardFixture(t *testing.T, nullSender bool) *dkim2ForwardFixture 
 	if err := os.Chmod(f.store, 0700); err != nil {
 		t.Fatal(err)
 	}
-	useDKIM2DNS(t, f.records)
+	f.dnsQueries = useDKIM2DNS(t, f.records)
 	var err error
 	f.original, err = dkim2.Sign([]byte("From: alice@example.jp\r\nTo: bob@relay.example\r\nCc: carol@destination.example\r\nSubject: original\r\n\r\nfirst\r\nlast\r\n"), dkim2.SignOptions{
 		Domain: "example.jp", Selector: "s", Key: key, Envelope: f.incoming,
@@ -154,6 +156,38 @@ func (f *dkim2ForwardFixture) session(t *testing.T, mode, source string) *Sessio
 	s.remoteAddr = net.ParseIP(source)
 	t.Cleanup(func() { s.Cleanup(nil) })
 	return s
+}
+
+func TestDKIM2ReceiveUsesOneVerification(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		enabled  bool
+		selected bool
+	}{
+		{"adapter verification for selected recipient", true, true},
+		{"adapter verification for unselected recipient", true, false},
+		{"standalone verification when adapter disabled", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newDKIM2ForwardFixture(t, false)
+			s := f.session(t, "receive", "192.0.2.1")
+			s.conf.EnableDKIM2 = tc.enabled
+			if !tc.selected {
+				s.conf.DKIM2Forwarding.ForwardRecipients = []string{"*@other.example"}
+			}
+			before := f.dnsQueries.Load()
+			m, response := feedDKIM2ForwardCallbacks(t, s, f.original, f.incoming, nil)
+			if response != milter.RespContinue {
+				t.Fatalf("receive response=%v", response)
+			}
+			if got := f.dnsQueries.Load() - before; got != 1 {
+				t.Fatalf("DNS TXT queries=%d, want one DKIM2 verification", got)
+			}
+			if selected := bytes.Contains(m.wire(), []byte(dkim2ContextHeader+":")); selected != tc.selected {
+				t.Fatalf("forwarding context present=%t, want %t", selected, tc.selected)
+			}
+		})
+	}
 }
 
 func TestDKIM2ForwardingRecipeDisclosurePolicy(t *testing.T) {

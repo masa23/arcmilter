@@ -333,7 +333,16 @@ func (s *Session) saveDKIM2IncomingContext(m milter.Modifier) (dkim2ForwardResul
 		}
 		return s.handleDKIM2CacheFailure(m, "capture", err)
 	}
-	result := dkim2.Verify(raw, s.dkim2Envelope(), dkim2.VerifyOptions{})
+	// EndOfMessage has already called MMAuth.Verify. Reuse its complete
+	// DKIM2 result when enabled, including failures, so DNS and cryptographic
+	// checks are not repeated for every incoming signed message. A receive
+	// stage may also run with EnableDKIM2 disabled, in which case it must
+	// still verify the chain before saving a forwarding context.
+	verification := s.mmauth.GetDKIM2Verification()
+	result := verification.Result
+	if !verification.Checked || verification.Err != nil {
+		result = dkim2.Verify(raw, s.dkim2Envelope(), dkim2.VerifyOptions{})
+	}
 	if result.Status != dkim2.Pass {
 		// The message comes from an untrusted SMTP client. A bad DKIM2 field
 		// must not let that client hold the delivery queue in TEMPFAIL forever.
