@@ -190,6 +190,33 @@ func TestDKIM2ReceiveUsesOneVerification(t *testing.T) {
 	}
 }
 
+func TestDKIM2SendRejectsUntrustedUnsignedMessage(t *testing.T) {
+	f := newDKIM2ForwardFixture(t, false)
+	wire := []byte("From: alice@example.jp\r\nTo: carol@destination.example\r\nSubject: unsigned\r\n\r\nbody\r\n")
+	outgoing := dkim2.Envelope{MailFrom: "<bounce@relay.example>", RcptTo: []string{"<carol@destination.example>"}}
+	for _, action := range []string{"skip-signing", "tempfail"} {
+		for _, source := range []struct {
+			name, address string
+			want          *milter.Response
+		}{
+			{"trusted reinjection", "127.0.0.1", milter.RespContinue},
+			{"untrusted source", "192.0.2.2", milter.RespTempFail},
+		} {
+			t.Run(action+"/"+source.name, func(t *testing.T) {
+				s := f.session(t, "send", source.address)
+				s.conf.DKIM2Forwarding.CacheFailureAction = action
+				m, response := feedDKIM2ForwardCallbacks(t, s, wire, outgoing, nil)
+				if response != source.want {
+					t.Fatalf("send response=%v, want %v", response, source.want)
+				}
+				if !bytes.Equal(m.wire(), wire) {
+					t.Fatal("unsigned message was modified")
+				}
+			})
+		}
+	}
+}
+
 func TestDKIM2ForwardingRecipeDisclosurePolicy(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -427,6 +454,7 @@ func TestDKIM2ForwardingInfersObservedFanout(t *testing.T) {
 		{"distinct recipients", []string{"<bob@relay.example>", "<carol@destination.example>"}, true},
 		{"single recipient", []string{"<carol@destination.example>"}, false},
 		{"duplicate with domain case", []string{"<carol@destination.example>", "<carol@DESTINATION.EXAMPLE>"}, false},
+		{"duplicate hidden recipient with domain case", []string{"<hidden@destination.example>", "<hidden@DESTINATION.EXAMPLE>"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newDKIM2ForwardFixture(t, false)

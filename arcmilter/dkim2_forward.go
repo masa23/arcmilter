@@ -219,14 +219,17 @@ func (s *Session) processDKIM2Forwarding(m milter.Modifier) (dkim2ForwardResult,
 	if s.conf.DKIM2Forwarding.Mode == "receive" {
 		return s.saveDKIM2IncomingContext(m)
 	}
+	// The dedicated send listener accepts only MTA reinjection. Checking
+	// before the unsigned/no-context fast path prevents an untrusted SMTP
+	// source from bypassing this boundary by omitting both DKIM2 fields.
+	if !s.conf.IsMyNetwork(s.remoteAddr) {
+		return dkim2ForwardNotApplicable, errors.New("forwarding requires a trusted MTA reinjection source in MyNetworks")
+	}
 	if len(contexts) == 0 && !hasDKIM2Fields(s.mmauth.Headers) {
 		if s.conf.EnableDKIM2 {
 			s.dkim2Result = "dkim2=none"
 		}
 		return dkim2ForwardNotApplicable, nil
-	}
-	if !s.conf.IsMyNetwork(s.remoteAddr) {
-		return dkim2ForwardNotApplicable, errors.New("forwarding requires a trusted MTA reinjection source in MyNetworks")
 	}
 	if len(contexts) == 0 {
 		return s.handleDKIM2CacheFailure(m, "load", fmt.Errorf("%w: receiving context was not saved", errDKIM2CacheMiss))
@@ -255,7 +258,7 @@ func (s *Session) processDKIM2Forwarding(m milter.Modifier) (dkim2ForwardResult,
 	}
 	options := dkim2.SignOptions{Domain: domain.Domain, Selector: selector, Key: domain.PrivateKeySigner, Envelope: s.dkim2Envelope()}
 	if !visibleDKIM2Recipients(s.mmauth.Headers, s.rcptTo) {
-		if len(s.rcptTo) != 1 {
+		if multipleDKIM2Recipients(s.rcptTo) {
 			return dkim2ForwardNotApplicable, errors.New("split forwarding with hidden recipients into separate one-recipient SMTP transactions")
 		}
 		options.BCCRecipients = append([]string(nil), s.rcptTo...)

@@ -129,6 +129,44 @@ func exchangeDKIM2ProtocolMessage(t *testing.T, address, remote string, raw []by
 	return append([]byte(strings.Join(fields, "")+"\r\n"), parsed.Body...)
 }
 
+func TestDKIM2SendProtocolRequiresTrustedReinjection(t *testing.T) {
+	_, trusted, err := net.ParseCIDR("127.0.0.0/8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conf := &config.Config{
+		ParsedMyNetworks: []*net.IPNet{trusted},
+		DKIM2Forwarding: config.DKIM2ForwardingConfig{
+			Mode: "send", StoreDirectory: filepath.Join(t.TempDir(), "contexts"),
+		},
+	}
+	address := startDKIM2ProtocolServer(t, conf)
+	client := milter.NewClient("tcp", address)
+	session, err := client.Session(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	continueWith := func(action *milter.Action, err error) {
+		t.Helper()
+		if err != nil || action == nil || action.StopProcessing() {
+			t.Fatalf("unexpected early Milter result: action=%v err=%v", action, err)
+		}
+	}
+	continueWith(session.Conn("smtp.example", milter.FamilyInet, 25, "192.0.2.2"))
+	continueWith(session.Helo("smtp.example"))
+	continueWith(session.Mail("<bounce@relay.example>", ""))
+	continueWith(session.Rcpt("<carol@destination.example>", ""))
+	continueWith(session.DataStart())
+	continueWith(session.HeaderField("From", "alice@example.jp", nil))
+	continueWith(session.HeaderField("To", "carol@destination.example", nil))
+	continueWith(session.HeaderEnd())
+	_, action, err := session.BodyReadFrom(bytes.NewReader([]byte("body\r\n")))
+	if err != nil || action == nil || action.Type != milter.ActionTempFail {
+		t.Fatalf("untrusted unsigned reinjection was accepted: action=%v err=%v", action, err)
+	}
+}
+
 func TestDKIM2ForwardProtocol(t *testing.T) {
 	originPublic, originKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

@@ -457,6 +457,12 @@ func ARCSign(s *Session, m milter.Modifier) {
 func (s *Session) EndOfMessage(m milter.Modifier) (*milter.Response, error) {
 	s.debugLog("EndOfMessage")
 	if s.mmauth == nil {
+		// Normal Milter flow creates MMAuth at EOH. Keep the dedicated
+		// reinjection boundary even if an unusual flow reaches EOM first.
+		if s.conf.DKIM2Forwarding.Mode == "send" && !s.conf.IsMyNetwork(s.remoteAddr) {
+			s.logError("DKIM2 forwarding requires a trusted MTA reinjection source in MyNetworks")
+			return milter.RespTempFail, nil
+		}
 		return milter.RespContinue, nil
 	}
 	defer func() {

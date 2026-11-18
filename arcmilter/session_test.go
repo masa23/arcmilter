@@ -40,6 +40,31 @@ func expectContinue(t *testing.T) func(*milter.Response, error) {
 	}
 }
 
+func TestEndOfMessageRequiresTrustedSendSourceWithoutMMAuth(t *testing.T) {
+	_, trusted, err := net.ParseCIDR("127.0.0.0/8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, mode, source string
+		want               *milter.Response
+	}{
+		{"send untrusted", "send", "192.0.2.2", milter.RespTempFail},
+		{"send trusted", "send", "127.0.0.1", milter.RespContinue},
+		{"receive untrusted", "receive", "192.0.2.2", milter.RespContinue},
+		{"disabled untrusted", "disabled", "192.0.2.2", milter.RespContinue},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Session{conf: &config.Config{ParsedMyNetworks: []*net.IPNet{trusted}}, remoteAddr: net.ParseIP(tc.source)}
+			s.conf.DKIM2Forwarding.Mode = tc.mode
+			got, err := s.EndOfMessage(nil)
+			if err != nil || got != tc.want {
+				t.Fatalf("response=%v error=%v, want %v", got, err, tc.want)
+			}
+		})
+	}
+}
+
 func newMessageSession(t *testing.T) (*Session, *messageModifier, *domainkey.DomainKey) {
 	t.Helper()
 	key, publicKey := signingKey(t)
@@ -289,12 +314,13 @@ func TestDKIMSigningRequiresTrustedOriginOutsideForwardSend(t *testing.T) {
 		name, authn, mode string
 		myNetwork         bool
 		wantDKIM          bool
+		wantTempFail      bool
 	}{
-		{"external spoofed From", "", "disabled", false, false},
-		{"authenticated sender", "login-user", "disabled", false, true},
-		{"trusted network", "", "disabled", true, true},
-		{"forward send stage with authentication", "login-user", "send", false, false},
-		{"forward send stage from trusted network", "", "send", true, false},
+		{"external spoofed From", "", "disabled", false, false, false},
+		{"authenticated sender", "login-user", "disabled", false, true, false},
+		{"trusted network", "", "disabled", true, true, false},
+		{"forward send stage with authentication", "login-user", "send", false, false, true},
+		{"forward send stage from trusted network", "", "send", true, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, m, key := newMessageSession(t)
@@ -307,6 +333,16 @@ func TestDKIMSigningRequiresTrustedOriginOutsideForwardSend(t *testing.T) {
 				s.conf.ParsedMyNetworks = []*net.IPNet{network}
 			}
 			headers := startMessage(t, s, m, tc.authn, "alice@example.jp", "origin trust", []string{"<bob@outside.example>"})
+			if tc.wantTempFail {
+				expectContinue(t)(s.Headers(m))
+				expectContinue(t)(s.BodyChunk([]byte("body\r\n"), m))
+				response, err := s.EndOfMessage(m)
+				if err != nil || response != milter.RespTempFail {
+					t.Fatalf("untrusted send route response=%v error=%v", response, err)
+				}
+				checkMessageSignatures(t, m, headers, "body\r\n", key, false, false)
+				return
+			}
 			finishMessage(t, s, m, "body\r\n")
 			checkMessageSignatures(t, m, headers, "body\r\n", key, tc.wantDKIM, false)
 		})
