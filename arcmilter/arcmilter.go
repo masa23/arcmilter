@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/rpc"
 	"strings"
+	"time"
 
 	"github.com/d--j/go-milter"
 	"github.com/k0kubun/pp/v3"
@@ -34,24 +35,36 @@ type Session struct {
 	mailFrom     string
 	from         string
 	fromDomain   string
+	rcptTo       []string
 	conf         *config.Config
 	mmauth       *mmauth.MMAuth
+	dkim2Message *dkim2Message
+	dkim2Result  string
 	authn        string
 }
 
 func (a *ARCMilter) Serve(l net.Listener, conf *config.Config) error {
+	protocol := milter.OptNoHeaderReply |
+		milter.OptNoUnknown | milter.OptNoData | milter.OptSkip |
+		milter.OptRcptRej | milter.OptNoConnReply | milter.OptNoHeloReply |
+		milter.OptNoMailReply | milter.OptNoRcptReply | milter.OptNoDataReply |
+		milter.OptNoUnknownReply | milter.OptNoEOHReply | milter.OptNoBodyReply
+	if conf.EnableDKIM2 || hasDKIM2Signing(conf) || dkim2ForwardingEnabled(conf) {
+		// DKIM2 のエンベロープには受理された宛先だけを含める。
+		protocol &^= milter.OptRcptRej
+	}
 	server := milter.NewServer(
 		milter.WithMilter(func() milter.Milter {
 			return &Session{conf: conf}
 		}),
-		milter.WithProtocol(milter.OptNoHeaderReply|
-			milter.OptNoUnknown|milter.OptNoData|milter.OptSkip|
-			milter.OptRcptRej|milter.OptNoConnReply|milter.OptNoHeloReply|
-			milter.OptNoMailReply|milter.OptNoRcptReply|milter.OptNoDataReply|
-			milter.OptNoUnknownReply|milter.OptNoEOHReply|milter.OptNoBodyReply),
+		milter.WithProtocol(protocol),
 		milter.WithAction(milter.OptChangeFrom|milter.OptAddRcpt|milter.OptRemoveRcpt|milter.OptChangeHeader),
 		milter.WithMacroRequest(milter.StageMail, []milter.MacroName{milter.MacroAuthAuthen}),
+		milter.WithReadTimeout(5*time.Minute),
+		milter.WithWriteTimeout(5*time.Minute),
 	)
+	stopCacheGC := startDKIM2CacheGC(conf)
+	defer stopCacheGC()
 	defer server.Close()
 	log.Printf("Start milter server")
 	return server.Serve(l)
@@ -96,19 +109,53 @@ func (s *Session) resetMessageState() {
 	s.from = ""
 	s.fromDomain = ""
 	s.authn = ""
-	s.mmauth = mmauth.NewMMAuth()
-}
-
-func (s *Session) ensureMMAuth() {
-	if s.mmauth == nil {
+	s.rcptTo = nil
+	s.dkim2Message = nil
+	s.dkim2Result = ""
+	if !s.conf.EnableDKIM2 {
 		s.mmauth = mmauth.NewMMAuth()
 	}
 }
 
+func (s *Session) ensureMMAuth() {
+	if s.mmauth == nil {
+		// DKIM2 は全 RCPT TO が揃った最初のヘッダで初期化する。
+		if s.conf.EnableDKIM2 && s.conf.DKIM2Forwarding.Mode != "send" {
+			var err error
+			s.mmauth, err = mmauth.NewMMAuthWithOptions(mmauth.MMAuthOptions{
+				EnableDKIM2: true, DKIM2Envelope: s.dkim2Envelope(),
+				DKIM2MaxMessageBytes: s.conf.DKIM2MaxMessageBytes,
+			})
+			if err != nil {
+				s.logError("DKIM2 initialization: %v", err)
+			}
+		}
+		if s.mmauth == nil {
+			s.mmauth = mmauth.NewMMAuth()
+		}
+		if domain, ok := s.conf.GetMatchingDomain(s.rcptToDomain); ok && s.isARCSign {
+			s.mmauth.AddBodyHash(createBodyHashConfig(domain.BodyCanonicalization, domain.HashAlgo, 0))
+		}
+	}
+}
+
+// A Milter connection may be reused for a different SMTP connection. Neither
+// its SMTP-client trust nor its authentication and message state may survive
+// that boundary.
+func (s *Session) NewConnection(_ milter.Modifier) error {
+	s.closeMMAuth()
+	conf := s.conf
+	*s = Session{conf: conf}
+	return nil
+}
+
 func (s *Session) Connect(host string, family string, port uint16, addr string, m milter.Modifier) (*milter.Response, error) {
 	s.debugLog("Connect: %s", addr)
-	if ip := net.ParseIP(addr); ip != nil {
-		s.remoteAddr = ip
+	s.remoteAddr = nil
+	// go-milter supplies tcp4/tcp6, unix or unknown. A Unix path that happens
+	// to resemble an IP address is not an SMTP-client IP address.
+	if family == "tcp4" || family == "tcp6" {
+		s.remoteAddr = net.ParseIP(addr)
 	}
 	return milter.RespContinue, nil
 }
@@ -129,7 +176,10 @@ func (s *Session) MailFrom(from string, esmtpArgs string, m milter.Modifier) (*m
 
 func (s *Session) RcptTo(rcptTo string, esmtpArgs string, m milter.Modifier) (*milter.Response, error) {
 	s.debugLog("RcptTo: %s", rcptTo)
-	s.ensureMMAuth()
+	s.rcptTo = append(s.rcptTo, smtpPath(rcptTo))
+	if !s.conf.EnableDKIM2 {
+		s.ensureMMAuth()
+	}
 
 	// SMTP 認証済みもしくは IP アドレスが MyNetworks に含まれている場合は署名を行わない
 	if s.authn != "" || s.conf.IsMyNetwork(s.remoteAddr) {
@@ -146,9 +196,9 @@ func (s *Session) RcptTo(rcptTo string, esmtpArgs string, m milter.Modifier) (*m
 	if domain, ok := s.conf.GetMatchingDomain(rpctToDomain); ok && domain.ARC && !s.isARCSign {
 		s.isARCSign = true
 		s.rcptToDomain = rpctToDomain
-		s.mmauth.AddBodyHash(
-			createBodyHashConfig(domain.BodyCanonicalization, domain.HashAlgo, 0),
-		)
+		if s.mmauth != nil {
+			s.mmauth.AddBodyHash(createBodyHashConfig(domain.BodyCanonicalization, domain.HashAlgo, 0))
+		}
 		return milter.RespContinue, nil
 	}
 
@@ -157,7 +207,9 @@ func (s *Session) RcptTo(rcptTo string, esmtpArgs string, m milter.Modifier) (*m
 
 func (s *Session) Header(name, value string, m milter.Modifier) (*milter.Response, error) {
 	s.ensureMMAuth()
-	if _, err := s.mmauth.Write([]byte(name + ": " + value + "\r\n")); err != nil {
+	header := []byte(name + ": " + normalizeHeaderValue(value) + "\r\n")
+	s.captureDKIM2(header)
+	if _, err := s.mmauth.Write(header); err != nil {
 		s.logError("s.mmauth.Write: %v", err)
 	}
 
@@ -188,6 +240,7 @@ func (s *Session) Header(name, value string, m milter.Modifier) (*milter.Respons
 func (s *Session) Headers(m milter.Modifier) (*milter.Response, error) {
 	s.debugLog("Headers")
 	s.ensureMMAuth()
+	s.captureDKIM2([]byte("\r\n"))
 	if _, err := s.mmauth.Write([]byte("\r\n")); err != nil {
 		s.logError("s.mmauth.Write: %v", err)
 	}
@@ -196,6 +249,7 @@ func (s *Session) Headers(m milter.Modifier) (*milter.Response, error) {
 
 func (s *Session) BodyChunk(chunk []byte, m milter.Modifier) (*milter.Response, error) {
 	s.ensureMMAuth()
+	s.captureDKIM2(chunk)
 	if _, err := s.mmauth.Write(chunk); err != nil {
 		s.logError("s.mmauth.Write: %v", err)
 	}
@@ -244,7 +298,10 @@ func extractDKIMSigningHeaders(headers, keys []string) []string {
 }
 
 func DKIMSign(s *Session, m milter.Modifier) {
-	if !s.isDKIMSign {
+	// From alone is not authorization to use a local signing key. The
+	// forwarding send stage also receives reinjected external mail, so it
+	// cannot be used for an initial DKIM signature even from MyNetworks.
+	if !s.isDKIMSign || !s.trustedSigningSender() || s.conf.DKIM2Forwarding.Mode == "send" {
 		return
 	}
 
@@ -354,6 +411,9 @@ func ARCSign(s *Session, m milter.Modifier) {
 		}
 
 		results := s.mmauth.GetAuthenticationHeader(s.remoteAddr, s.helo, s.mailFrom)
+		if s.dkim2Result != "" {
+			results = append(results, s.dkim2Result)
+		}
 		result := arc.ARCAuthenticationResults{
 			InstanceNumber: instanceNumber,
 			AuthServId:     s.rcptToDomain,
@@ -397,25 +457,70 @@ func ARCSign(s *Session, m milter.Modifier) {
 func (s *Session) EndOfMessage(m milter.Modifier) (*milter.Response, error) {
 	s.debugLog("EndOfMessage")
 	if s.mmauth == nil {
+		// Normal Milter flow creates MMAuth at EOH. Keep the dedicated
+		// reinjection boundary even if an unusual flow reaches EOM first.
+		if s.conf.DKIM2Forwarding.Mode == "send" && !s.conf.IsMyNetwork(s.remoteAddr) {
+			s.logError("DKIM2 forwarding requires a trusted MTA reinjection source in MyNetworks")
+			return milter.RespTempFail, nil
+		}
 		return milter.RespContinue, nil
 	}
+	defer func() {
+		s.mmauth = nil
+		s.rcptTo = nil
+		s.dkim2Message = nil
+		s.dkim2Result = ""
+	}()
 	if err := s.mmauth.Close(); err != nil {
 		s.logError("s.mmauth.Close: %v", err)
-		s.mmauth = nil
+		if s.conf.EnableDKIM2 {
+			// 従来ヘッダの解析失敗時も DKIM2 は独立して検証できる。
+			s.mmauth.Verify()
+		}
+		forwarded, forwardingErr := s.processDKIM2Forwarding(m)
+		if forwardingErr != nil {
+			s.logError("DKIM2 forwarding: %v", forwardingErr)
+			return milter.RespTempFail, nil
+		}
+		if forwarded == dkim2ForwardNotApplicable && s.eligibleForDKIM2InitialSigning() {
+			s.logError("DKIM2 signing requires a valid parsed message: %v", err)
+			return milter.RespTempFail, nil
+		}
+		s.logDKIM2Verification()
 		return milter.RespContinue, nil
 	}
 
 	// Verify
 	s.mmauth.Verify()
+	forwarded, err := s.processDKIM2Forwarding(m)
+	if err != nil {
+		s.logError("DKIM2 forwarding: %v", err)
+		return milter.RespTempFail, nil
+	}
+	s.logDKIM2Verification()
 
 	// DKIM 署名
 	DKIMSign(s, m)
+	if forwarded == dkim2ForwardNotApplicable {
+		if err := DKIM2Sign(s, m); err != nil {
+			s.logError("DKIM2 signing: %v", err)
+			return milter.RespTempFail, nil
+		}
+	}
 
 	// ARC 署名
 	ARCSign(s, m)
 
-	s.debugLog("session: %s", pp.Sprint(s))
-	s.mmauth = nil
+	s.dkim2Message = nil
+	if debug {
+		// MMAuth 内部のパイプや鍵を走査せず、セッション所有の値だけを表示する。
+		s.debugLog("session: %s", pp.Sprint(map[string]interface{}{
+			"remoteAddr": s.remoteAddr.String(), "helo": s.helo,
+			"mailFrom": s.mailFrom, "fromDomain": s.fromDomain,
+			"rcptToDomain": s.rcptToDomain, "isDKIMSign": s.isDKIMSign,
+			"isARCSign": s.isARCSign, "dkim2Result": s.dkim2Result,
+		}))
+	}
 
 	return milter.RespContinue, nil
 }
@@ -431,6 +536,9 @@ func (s *Session) Abort(_ milter.Modifier) error {
 	s.from = ""
 	s.fromDomain = ""
 	s.authn = ""
+	s.rcptTo = nil
+	s.dkim2Message = nil
+	s.dkim2Result = ""
 	return nil
 }
 
@@ -438,4 +546,7 @@ func (s *Session) Cleanup(_ milter.Modifier) {
 	s.debugLog("Cleanup")
 
 	s.closeMMAuth()
+	s.rcptTo = nil
+	s.dkim2Message = nil
+	s.dkim2Result = ""
 }

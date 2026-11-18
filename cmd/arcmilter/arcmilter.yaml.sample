@@ -1,12 +1,21 @@
 MilterListen:
-  Network: tcp
-  Address: 0.0.0.0:10029
+  Network: unix
+  Address: /var/run/arcmilter.sock
+  Mode: 0600
+  Owner: postfix
+  Group: postfix
+  # 同時Milter接続数。DKIM2の原文保持量に合わせて調整する
+  MaxConnections: 4
+# TCPのIP制限だけでは同一ホストの別プロセスを認証できない。署名時はUnix socketを推奨
+# TCP署名を選ぶ場合は接続元をOS側で隔離し、AllowTCPWithSigning: trueを明示する
+# AllowedPeersはSMTPクライアント用のMyNetworksとは別で、MTA自身だけを指定する
 #MilterListen:
-#  Network: unix
-#  Address: /var/run/arcmilter.sock
-#  Mode: 0600
-#  Owner: postfix
-#  Group: postfix
+#  Network: tcp
+#  Address: 127.0.0.1:10029
+#  AllowTCPWithSigning: true
+#  AllowedPeers:
+#    - 127.0.0.0/8
+#    - ::1/128
 ControlSocketFile:
   Path: /var/run/arcmilterctl.sock
   Mode: 0600
@@ -15,6 +24,26 @@ PIDFile:
 LogFile:
   Path: /var/log/arcmilter.log
   Mode: 0600
+# DKIM2受信検証（実験的、送信署名のDomains[].DKIM2とは独立）
+EnableDKIM2: false
+# 検証・署名の原文保持上限。0は32 MiB、指定範囲は1〜33554432バイト
+DKIM2MaxMessageBytes: 33554432
+# alias転送時はreceive/sendを別プロセスで動かし、同じ保存先・サービスユーザーを使用する
+DKIM2Forwarding:
+  Mode: disabled # disabled / receive / send
+  # receive/sendでは必須の絶対パス。メール原文を0600で保存する
+  # StoreDirectory: /var/lib/arcmilter/dkim2
+  # receiveでは必須。展開後にローカル配送を作らない転送専用aliasだけを列挙する（*@domainも可）
+  # ForwardRecipients:
+  #   - forward@example.jp
+  # 送信側で署名ドメインが曖昧な場合に指定。保存した実受信ドメインに限る
+  # SigningDomain: example.jp
+  MaxAgeSeconds: 86400 # 0は24時間。最長14日。容量不足では期限前でも古い原文を回収
+  MaxStoredBytes: 1073741824 # 0は1 GiB。上限到達時は保存時刻の古い順に回収
+  MaxStoredBytesPerRecipient: 0 # alias/catch-allごとの上限。0は全体容量と対象数から安全に配分
+  CacheFailureAction: skip-signing # 保存不能・欠落時は追加署名を省略して配送継続。tempfailで厳格運用
+  MultipleDeliveries: false # 別SMTPに分かれた転送コピーの申告。同一SMTPの複数実宛先は自動判定
+  AllowRecipeDisclosure: false # 変更前ヘッダ・本文を開示するRecipeは既定拒否
 Domains:
   # 通常のドメイン指定（完全一致）
   "example.jp":
@@ -23,6 +52,12 @@ Domains:
     Selector: "default"
     PrivateKeyFile: "/etc/arcmilter/keys/example.jp.key"
     DKIM: true
+    # SMTP認証済みまたはMyNetworksからの送信メールをDKIM2署名する
+    # 初回署名はTo/Ccの可視宛先限定。転送用receive/send段では初回署名しない
+    # 転送署名はDKIM2Forwardingの二段構成を使用する
+    DKIM2: false
+    # 省略時はSelectorを使用。PrivateKeyFileのRSA/Ed25519鍵を共有する
+    # DKIM2Selector: "default"
     ARC: true
   "example.com":
     HeaderCanonicalization: "relaxed"

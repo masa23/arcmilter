@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"log"
 	"math/rand"
 	"net"
 	"os"
@@ -16,19 +19,694 @@ import (
 	"time"
 
 	"github.com/d--j/go-milter"
+	"github.com/masa23/arcmilter/config"
 	"github.com/masa23/mmauth/arc"
 	"github.com/masa23/mmauth/dkim"
 	"gopkg.in/yaml.v3"
 )
 
 type execTest struct {
-	dir      string
-	cmd      *exec.Cmd
-	done     chan struct{}
-	waitErr  error // doneを閉じた後にだけ参照する
-	stopped  bool
-	coverDir string
-	childPID int
+	dir       string
+	cmd       *exec.Cmd
+	done      chan struct{}
+	waitErr   error // doneを閉じた後にだけ参照する
+	stopped   bool
+	coverDir  string
+	childPID  int
+	configure func(map[string]interface{})
+}
+
+type milterPeerTestAddr string
+
+func (a milterPeerTestAddr) Network() string { return "test" }
+func (a milterPeerTestAddr) String() string  { return string(a) }
+
+type milterPeerTestConn struct {
+	remote net.Addr
+	closed bool
+}
+
+func (c *milterPeerTestConn) Read([]byte) (int, error)         { return 0, net.ErrClosed }
+func (c *milterPeerTestConn) Write(p []byte) (int, error)      { return len(p), nil }
+func (c *milterPeerTestConn) Close() error                     { c.closed = true; return nil }
+func (c *milterPeerTestConn) LocalAddr() net.Addr              { return milterPeerTestAddr("local") }
+func (c *milterPeerTestConn) RemoteAddr() net.Addr             { return c.remote }
+func (c *milterPeerTestConn) SetDeadline(time.Time) error      { return nil }
+func (c *milterPeerTestConn) SetReadDeadline(time.Time) error  { return nil }
+func (c *milterPeerTestConn) SetWriteDeadline(time.Time) error { return nil }
+
+type milterPeerTestListener struct {
+	connections []net.Conn
+	err         error
+}
+
+func (l *milterPeerTestListener) Accept() (net.Conn, error) {
+	if len(l.connections) == 0 {
+		return nil, l.err
+	}
+	conn := l.connections[0]
+	l.connections = l.connections[1:]
+	return conn, nil
+}
+
+func (l *milterPeerTestListener) Close() error   { return nil }
+func (l *milterPeerTestListener) Addr() net.Addr { return milterPeerTestAddr("listener") }
+
+func TestListenPrivateUnix(t *testing.T) {
+	// A permissive caller umask makes the test prove that listenPrivateUnix
+	// applies its own restriction at bind time and then restores the caller's
+	// setting. Top-level tests in this package do not run in parallel.
+	path := filepath.Join(t.TempDir(), "milter.sock")
+	previous := syscall.Umask(0)
+	defer syscall.Umask(previous)
+	listener, err := listenPrivateUnix(path)
+	if err != nil {
+		t.Fatalf("listenPrivateUnix() error = %v", err)
+	}
+	defer listener.Close()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("os.Stat() error = %v", err)
+	}
+	if got := info.Mode().Perm(); got&0077 != 0 {
+		t.Fatalf("socket permissions = %#o, want no group or other permissions", got)
+	}
+
+	got := syscall.Umask(0)
+	syscall.Umask(got)
+	if got != 0 {
+		t.Fatalf("process umask after listenPrivateUnix() = %#o, want 0", got)
+	}
+}
+
+func TestPrivateRuntimeDirectoryAndSocketPaths(t *testing.T) {
+	dir := t.TempDir()
+	unsafe := filepath.Join(dir, "writable")
+	if err := os.Mkdir(unsafe, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(unsafe, 0777); err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePrivateRuntimeDirectory(filepath.Join(unsafe, "daemon.sock")); err == nil {
+		t.Fatal("group/world-writable runtime directory was accepted")
+	}
+	link := filepath.Join(dir, "indirect")
+	if err := os.Symlink(unsafe, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePrivateRuntimeDirectory(filepath.Join(link, "daemon.sock")); err == nil {
+		t.Fatal("symlink into an unsafe runtime directory was accepted")
+	}
+
+	path := filepath.Join(dir, "daemon.sock")
+	if err := os.WriteFile(path, []byte("preserve"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeStaleUnixSocket(path, os.Geteuid()); err == nil {
+		t.Fatal("regular file was removed as a stale socket")
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "preserve" {
+		t.Fatalf("regular file changed: %q, %v", got, err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := listenPrivateUnix(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	if err := configureUnixSocket(path, 0600, -1, -1); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("socket mode = %v, %v", info, err)
+	}
+	if err := removeStaleUnixSocket(path, os.Geteuid()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale socket still exists: %v", err)
+	}
+}
+
+func TestDropChildPrivilegesClearsSupplementaryGroups(t *testing.T) {
+	const childMarker = "ARCMILTER_TEST_DROP_GROUPS"
+	if os.Getenv(childMarker) == "1" {
+		before, err := os.Getgroups()
+		if err != nil || len(before) == 0 {
+			t.Fatalf("test child did not inherit supplementary groups: %v, %v", before, err)
+		}
+		if err := dropChildPrivileges(os.Geteuid(), os.Getegid()); err != nil {
+			t.Fatal(err)
+		}
+		after, err := os.Getgroups()
+		if err != nil || len(after) != 0 {
+			t.Fatalf("supplementary groups survived privilege drop: %v, %v", after, err)
+		}
+		return
+	}
+	if os.Geteuid() != 0 {
+		t.Skip("test requires root to set supplementary groups in a subprocess")
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestDropChildPrivilegesClearsSupplementaryGroups$")
+	cmd.Env = append(os.Environ(), childMarker+"=1")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 0, Gid: 0, Groups: []uint32{1, 2}}}
+	output, err := cmd.CombinedOutput()
+	if errors.Is(err, syscall.EPERM) {
+		t.Skipf("process cannot assign supplementary groups: %v", err)
+	}
+	if err != nil {
+		t.Fatalf("privilege drop subprocess failed: %v\n%s", err, output)
+	}
+}
+
+func TestMilterAcceptLockSerializesOpeners(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "accept.lock")
+	if err := prepareMilterAcceptLock(path); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareMilterAcceptLock(path); err != nil {
+		t.Fatalf("reuse existing lock: %v", err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatal("preparing an existing accept lock replaced its inode")
+	}
+	first, err := openMilterAcceptLock(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := openMilterAcceptLock(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+
+	if err := syscall.Flock(int(first.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatalf("first lock: %v", err)
+	}
+	if err := syscall.Flock(int(second.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); !errors.Is(err, syscall.EWOULDBLOCK) {
+		t.Fatalf("second independent opener acquired held lock: %v", err)
+	}
+	if err := syscall.Flock(int(first.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatalf("unlock first: %v", err)
+	}
+	if err := syscall.Flock(int(second.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatalf("second lock after release: %v", err)
+	}
+
+	link := filepath.Join(t.TempDir(), "accept-link")
+	if err := os.Symlink(path, link); err != nil {
+		t.Fatal(err)
+	}
+	if file, err := openMilterAcceptLock(link); err == nil {
+		file.Close()
+		t.Fatal("symbolic-link accept lock was opened")
+	}
+	if err := prepareMilterAcceptLock(link); err == nil {
+		t.Fatal("symbolic-link accept lock was prepared")
+	}
+	other := filepath.Join(t.TempDir(), "accept-hardlink")
+	if err := os.Link(path, other); err != nil {
+		t.Fatal(err)
+	}
+	if file, err := openMilterAcceptLock(other); err == nil {
+		file.Close()
+		t.Fatal("multiply-linked accept lock was opened")
+	}
+	if err := prepareMilterAcceptLock(other); err == nil {
+		t.Fatal("multiply-linked accept lock was prepared")
+	}
+}
+
+func TestMilterAcceptLockWaitCanBeCanceled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "accept.lock")
+	if err := prepareMilterAcceptLock(path); err != nil {
+		t.Fatal(err)
+	}
+	first, err := openMilterAcceptLock(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := openMilterAcceptLock(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	if err := syscall.Flock(int(first.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() { result <- acquireMilterAcceptLock(ctx, second) }()
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("canceled lock wait returned %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled child remained blocked on the accept lock")
+	}
+	if err := syscall.Flock(int(second.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); !errors.Is(err, syscall.EWOULDBLOCK) {
+		t.Fatalf("lock holder was disturbed by cancellation: %v", err)
+	}
+	if err := syscall.Flock(int(first.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	if err := acquireMilterAcceptLock(context.Background(), second); err != nil {
+		t.Fatalf("released accept lock could not be acquired: %v", err)
+	}
+}
+
+func TestNotifyChildReadyStopsWhenCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	notifyChildReady(ctx, time.Millisecond, func() error {
+		t.Fatal("canceled child sent a readiness notification")
+		return nil
+	})
+}
+
+func TestDebugConfigSummaryDoesNotExposePrivateKey(t *testing.T) {
+	key := make(ed25519.PrivateKey, ed25519.PrivateKeySize)
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	c := &config.Config{
+		Path: "config.yaml", EnableDKIM2: true,
+		Domains:         map[string]config.Domain{"example.test": {PrivateKeySigner: key, PrivateKeyFile: "secret-key.pem"}},
+		DKIM2Forwarding: config.DKIM2ForwardingConfig{Mode: "receive"},
+	}
+	c.MilterListen.Network, c.MilterListen.Address, c.MilterListen.MaxConnections = "unix", "milter.sock", 4
+	summary := debugConfigSummary(c)
+	for _, secret := range []string{fmt.Sprint(key), "PrivateKeySigner", "secret-key.pem"} {
+		if strings.Contains(summary, secret) {
+			t.Fatalf("debug configuration contains a private-key field: %s", summary)
+		}
+	}
+	for _, expected := range []string{`path="config.yaml"`, `network="unix"`, `address="milter.sock"`, "max_connections=4", "domains=1", "dkim2_verify=true", `forwarding="receive"`} {
+		if !strings.Contains(summary, expected) {
+			t.Fatalf("missing %s from safe debug summary: %s", expected, summary)
+		}
+	}
+}
+
+func TestParentConfigReloadRollsBackLogger(t *testing.T) {
+	oldConf, oldParentLog, oldWriter := conf, parentLogFile, log.Writer()
+	t.Cleanup(func() {
+		if conf != nil && conf.LogFd != nil && conf.LogFd != os.Stderr && conf.LogFd != os.Stdout {
+			_ = conf.LogFd.Close()
+		}
+		conf, parentLogFile = oldConf, oldParentLog
+		log.SetOutput(oldWriter)
+	})
+	dir := t.TempDir()
+	current := &config.Config{}
+	current.LogFile.Path = filepath.Join(dir, "current.log")
+	current.LogFile.Mode = 0600
+	conf = current
+	if err := openLogFile(); err != nil {
+		t.Fatal(err)
+	}
+	next := &config.Config{}
+	next.LogFile.Path = filepath.Join(dir, "next.log")
+	next.LogFile.Mode = 0600
+	previous, err := switchParentConfig(next)
+	if err != nil || previous != current || conf != next {
+		t.Fatalf("staging reload: previous=%p conf=%p err=%v", previous, conf, err)
+	}
+	if err := rollbackParentConfig(previous); err != nil || conf != current {
+		t.Fatalf("rollback reload: conf=%p err=%v", conf, err)
+	}
+	log.Print("rollback marker")
+	data, err := os.ReadFile(current.LogFile.Path)
+	if err != nil || !strings.Contains(string(data), "rollback marker") {
+		t.Fatalf("old log was not restored: %q, %v", data, err)
+	}
+	data, err = os.ReadFile(next.LogFile.Path)
+	if err != nil || strings.Contains(string(data), "rollback marker") {
+		t.Fatalf("new log retained writes after rollback: %q, %v", data, err)
+	}
+
+	invalid := &config.Config{}
+	invalid.LogFile.Path = filepath.Join(dir, "missing", "invalid.log")
+	invalid.LogFile.Mode = 0600
+	if _, err := switchParentConfig(invalid); err == nil || conf != current {
+		t.Fatalf("failed log open committed reload: conf=%p err=%v", conf, err)
+	}
+}
+
+func TestOpenPrivateLogFileRejectsRedirection(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.log")
+	if err := os.WriteFile(target, []byte("preserve"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.log")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if file, err := openPrivateLogFile(link, 0600); err == nil {
+		file.Close()
+		t.Fatal("symlink log path was opened")
+	}
+	if got, err := os.ReadFile(target); err != nil || string(got) != "preserve" {
+		t.Fatalf("symlink target changed: %q, %v", got, err)
+	}
+	hardlink := filepath.Join(dir, "hardlink.log")
+	if err := os.Link(target, hardlink); err != nil {
+		t.Fatal(err)
+	}
+	if file, err := openPrivateLogFile(hardlink, 0600); err == nil {
+		file.Close()
+		t.Fatal("multiply-linked log path was opened")
+	}
+	if file, err := openPrivateLogFile(dir, 0600); err == nil {
+		file.Close()
+		t.Fatal("directory log path was opened")
+	}
+	if err := os.Remove(hardlink); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(target, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if file, err := openPrivateLogFile(target, 0600); err == nil {
+		file.Close()
+		t.Fatal("log path with broader permissions was opened")
+	}
+}
+
+func TestValidateReloadConfig(t *testing.T) {
+	var current config.Config
+	current.MilterListen.Network, current.MilterListen.Address, current.MilterListen.Mode = "unix", "milter.sock", 0600
+	current.MilterListen.Uid, current.MilterListen.Gid = 100, 100
+	current.ControlSocketFile.Path, current.ControlSocketFile.Mode = "control.sock", 0600
+	current.PidFile.Path = "arcmilter.pid"
+	for _, tc := range []struct {
+		name  string
+		edit  func(*config.Config)
+		field string
+	}{
+		{"network", func(c *config.Config) { c.MilterListen.Network = "tcp" }, "MilterListen.Network"},
+		{"address", func(c *config.Config) { c.MilterListen.Address = "other.sock" }, "MilterListen.Address"},
+		{"socket mode", func(c *config.Config) { c.MilterListen.Mode = 0660 }, "MilterListen.Mode"},
+		{"socket owner", func(c *config.Config) { c.MilterListen.Uid++ }, "MilterListen.Owner"},
+		{"socket group", func(c *config.Config) { c.MilterListen.Gid++ }, "MilterListen.Group"},
+		{"control path", func(c *config.Config) { c.ControlSocketFile.Path = "other-control.sock" }, "ControlSocketFile.Path"},
+		{"control mode", func(c *config.Config) { c.ControlSocketFile.Mode = 0660 }, "ControlSocketFile.Mode"},
+		{"PID path", func(c *config.Config) { c.PidFile.Path = "other.pid" }, "PIDFile.Path"},
+		{"worker limits and identities", func(c *config.Config) { c.MilterListen.MaxConnections = 8; c.Uid++; c.Gid++ }, ""},
+		{"signing and cache policy", func(c *config.Config) {
+			c.EnableDKIM2 = true
+			c.DKIM2Forwarding.Mode = "receive"
+			c.DKIM2Forwarding.MaxAgeSeconds = 86400
+		}, ""},
+		{"log file", func(c *config.Config) { c.LogFile.Path = "new.log" }, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			next := current
+			tc.edit(&next)
+			err := validateReloadConfig(&current, &next)
+			if tc.field == "" {
+				if err != nil {
+					t.Fatalf("reloadable setting rejected: %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.field) || !strings.Contains(err.Error(), "restart required") {
+				t.Fatalf("startup setting change accepted: %v", err)
+			}
+		})
+	}
+}
+
+func TestExecRejectsReloadOfParentBoundSettings(t *testing.T) {
+	f := newExecTest(t)
+	f.build(t)
+	f.start(t)
+	path := filepath.Join(f.dir, "test.yaml")
+	base, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.WriteFile(path, base, 0600); err != nil {
+			t.Error(err)
+		}
+	})
+	for _, tc := range []struct {
+		section, field string
+		value          interface{}
+	}{
+		{"MilterListen", "Network", "tcp"},
+		{"MilterListen", "Address", filepath.Join(f.dir, "other.sock")},
+		{"MilterListen", "Mode", 0660},
+		{"ControlSocketFile", "Path", filepath.Join(f.dir, "other-control.sock")},
+		{"ControlSocketFile", "Mode", 0660},
+		{"PIDFile", "Path", filepath.Join(f.dir, "other.pid")},
+	} {
+		t.Run(tc.section+"."+tc.field, func(t *testing.T) {
+			var next map[string]interface{}
+			if err := yaml.Unmarshal(base, &next); err != nil {
+				t.Fatal(err)
+			}
+			next[tc.section].(map[string]interface{})[tc.field] = tc.value
+			if tc.section == "MilterListen" && tc.field == "Network" {
+				next["MilterListen"].(map[string]interface{})["AllowTCPWithSigning"] = true
+			}
+			raw, err := yaml.Marshal(next)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			offset := f.logOffset(t)
+			if err := f.cmd.Process.Signal(syscall.SIGHUP); err != nil {
+				t.Fatal(err)
+			}
+			f.waitLog(t, offset, func(log string) bool { return strings.Contains(log, "restart required") })
+			f.checkSelector(t, "default")
+			buf, err := os.ReadFile(filepath.Join(f.dir, "arcmilter.log"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(buf[offset:]), "child process started") {
+				t.Fatal("restart-only configuration spawned a replacement child")
+			}
+		})
+	}
+}
+
+func TestExecChildRestartKeepsLastAcceptedConfig(t *testing.T) {
+	f := newExecTest(t)
+	f.build(t)
+	f.start(t)
+	path := filepath.Join(f.dir, "test.yaml")
+	base, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rejected map[string]interface{}
+	if err := yaml.Unmarshal(base, &rejected); err != nil {
+		t.Fatal(err)
+	}
+	listener := rejected["MilterListen"].(map[string]interface{})
+	listener["Network"] = "tcp"
+	listener["Address"] = "127.0.0.1:10029"
+	listener["AllowTCPWithSigning"] = true
+	raw, err := yaml.Marshal(rejected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	offset := f.logOffset(t)
+	if err := f.cmd.Process.Signal(syscall.SIGHUP); err != nil {
+		t.Fatal(err)
+	}
+	f.waitLog(t, offset, func(log string) bool {
+		return strings.Contains(log, "MilterListen.Network cannot change during reload")
+	})
+
+	oldPID := f.childPID
+	offset = f.logOffset(t)
+	if err := syscall.Kill(oldPID, syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	f.childPID = f.waitLogPID(t, "child process ready", offset)
+	if f.childPID == oldPID {
+		t.Fatal("child was not replaced after rejected reload")
+	}
+	// The inherited listener is Unix. A child that adopts the rejected TCP
+	// setting closes every Unix connection before it reaches the Milter server.
+	f.checkSelector(t, "default")
+
+	// An edit without SIGHUP must likewise wait until the parent accepts it.
+	var unrequested map[string]interface{}
+	if err := yaml.Unmarshal(base, &unrequested); err != nil {
+		t.Fatal(err)
+	}
+	unrequested["Domains"].(map[string]interface{})["example.jp"].(map[string]interface{})["Selector"] = "unrequested"
+	raw, err = yaml.Marshal(unrequested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	oldPID = f.childPID
+	offset = f.logOffset(t)
+	if err := syscall.Kill(oldPID, syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	f.childPID = f.waitLogPID(t, "child process ready", offset)
+	if f.childPID == oldPID {
+		t.Fatal("child was not replaced after unrequested edit")
+	}
+	f.checkSelector(t, "default")
+}
+
+func TestExecPendingChildStopsWithoutAcceptLock(t *testing.T) {
+	for _, termination := range []struct {
+		name   string
+		signal syscall.Signal
+	}{{"normal exit", syscall.SIGTERM}, {"abnormal exit", syscall.SIGKILL}} {
+		t.Run(termination.name, func(t *testing.T) {
+			f := newExecTest(t)
+			f.build(t)
+			f.start(t)
+			oldPID := f.childPID
+			// A stopped old child retains the accept lock even after the parent
+			// asks it to exit. Its replacement must still honor cancellation.
+			if err := syscall.Kill(oldPID, syscall.SIGSTOP); err != nil {
+				t.Fatal(err)
+			}
+			paused := true
+			defer func() {
+				if paused {
+					_ = syscall.Kill(oldPID, syscall.SIGCONT)
+				}
+			}()
+			offset := f.logOffset(t)
+			if err := f.cmd.Process.Signal(syscall.SIGHUP); err != nil {
+				t.Fatal(err)
+			}
+			pendingPID := f.waitLogPID(t, "child process started", offset)
+			if pendingPID == oldPID {
+				t.Fatal("reload did not start a replacement child")
+			}
+			f.waitLog(t, offset, func(log string) bool {
+				return strings.Contains(log, fmt.Sprintf("child process ready pid=%d", pendingPID))
+			})
+			f.waitLog(t, offset, func(log string) bool {
+				return strings.Contains(log, fmt.Sprintf("sent SIGTERM to old child process pid=%d", oldPID))
+			})
+			if err := syscall.Kill(pendingPID, termination.signal); err != nil {
+				t.Fatal(err)
+			}
+			f.waitLog(t, offset, func(log string) bool {
+				return strings.Contains(log, fmt.Sprintf("child process exit pid=%d", pendingPID))
+			})
+			offset = f.logOffset(t)
+			if err := syscall.Kill(oldPID, syscall.SIGCONT); err != nil {
+				t.Fatal(err)
+			}
+			paused = false
+			f.childPID = f.waitLogPID(t, "child process ready", offset)
+			if f.childPID == oldPID || f.childPID == pendingPID {
+				t.Fatal("handoff did not replenish its lost children")
+			}
+			f.checkSelector(t, "default")
+		})
+	}
+}
+
+func TestMilterPeerListener(t *testing.T) {
+	done := errors.New("accept complete")
+	untrusted := &milterPeerTestConn{remote: &net.TCPAddr{IP: net.ParseIP("192.0.2.10"), Port: 12345}}
+	malformed := &milterPeerTestConn{remote: milterPeerTestAddr("not a TCP address")}
+	trusted := &milterPeerTestConn{remote: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 12346}}
+	listener := &milterPeerListener{
+		Listener: &milterPeerTestListener{connections: []net.Conn{untrusted, malformed, trusted}, err: done},
+		allowed:  net.IP.IsLoopback,
+	}
+	conn, err := listener.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conn != trusted || !untrusted.closed || !malformed.closed || trusted.closed {
+		t.Fatalf("peer filtering: conn=%p untrusted.closed=%t malformed.closed=%t trusted.closed=%t",
+			conn, untrusted.closed, malformed.closed, trusted.closed)
+	}
+	_ = trusted.Close()
+
+	last := &milterPeerTestConn{remote: &net.TCPAddr{IP: net.ParseIP("198.51.100.20"), Port: 12347}}
+	listener.Listener = &milterPeerTestListener{connections: []net.Conn{last}, err: done}
+	if conn, err := listener.Accept(); !errors.Is(err, done) || conn != nil || !last.closed {
+		t.Fatalf("rejected final peer: conn=%v err=%v closed=%t", conn, err, last.closed)
+	}
+}
+
+func TestMilterConnectionListener(t *testing.T) {
+	done := errors.New("accept complete")
+	first := &milterPeerTestConn{remote: milterPeerTestAddr("first")}
+	second := &milterPeerTestConn{remote: milterPeerTestAddr("second")}
+	listener := &milterConnectionListener{
+		Listener: &milterPeerTestListener{connections: []net.Conn{first, second}, err: done},
+		slots:    make(chan struct{}, 1),
+	}
+	conn, err := listener.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	limited, ok := conn.(*milterLimitedConn)
+	if !ok {
+		t.Fatalf("first admission returned %T, want *milterLimitedConn", conn)
+	}
+	packet, ok := limited.Conn.(*milterPacketLimitedConn)
+	if !ok || packet.Conn != first || first.closed || len(listener.slots) != 1 {
+		t.Fatalf("first admission: conn=%T first.closed=%t slots=%d", conn, first.closed, len(listener.slots))
+	}
+	if conn, err := listener.Accept(); !errors.Is(err, done) || conn != nil || !second.closed || len(listener.slots) != 1 {
+		t.Fatalf("full admission: conn=%v err=%v second.closed=%t slots=%d", conn, err, second.closed, len(listener.slots))
+	}
+	if err := limited.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := limited.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !first.closed || len(listener.slots) != 0 {
+		t.Fatalf("release: first.closed=%t slots=%d", first.closed, len(listener.slots))
+	}
+
+	third := &milterPeerTestConn{remote: milterPeerTestAddr("third")}
+	listener.Listener = &milterPeerTestListener{connections: []net.Conn{third}, err: done}
+	conn, err = listener.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !third.closed || len(listener.slots) != 0 {
+		t.Fatalf("readmission: third.closed=%t slots=%d", third.closed, len(listener.slots))
+	}
 }
 
 var testCreateFile = []struct {
@@ -43,7 +721,7 @@ var testCreateFile = []struct {
 	},
 	{
 		name:       "arcmilter.pid",
-		permission: 0644,
+		permission: 0600,
 		stopExist:  false,
 	},
 	{
@@ -58,7 +736,8 @@ var testCreateFile = []struct {
 	},
 }
 
-func TestExec(t *testing.T) {
+func newExecTest(t *testing.T) *execTest {
+	t.Helper()
 	// UNIXソケットのパス長制限を超えないよう、TMPDIRに依存しない短いパスを使う。
 	dir, err := os.MkdirTemp("/tmp", "arcmilter-")
 	if err != nil {
@@ -90,12 +769,17 @@ func TestExec(t *testing.T) {
 			}
 		}
 	})
+	return f
+}
+
+func TestExec(t *testing.T) {
+	f := newExecTest(t)
 	if !t.Run("build", f.build) || !t.Run("version", f.version) || !t.Run("exec", f.start) {
 		return
 	}
 	t.Run("milter", func(t *testing.T) { testMilter(t, filepath.Join(f.dir, "arcmilter.sock")) })
 	// 最初の子を正常終了させ、Milterの全ケースのカウンターを回収してから強制終了を検証する。
-	if !t.Run("reload", f.reload) || !t.Run("restart", f.restart) || !t.Run("reload-invalid", f.reloadInvalid) || !t.Run("reload-timeout", f.reloadTimeout) {
+	if !t.Run("reload", f.reload) || !t.Run("restart", f.restart) || !t.Run("reload-invalid", f.reloadInvalid) || !t.Run("restart-after-invalid-reload", f.restart) || !t.Run("reload-timeout", f.reloadTimeout) || !t.Run("restart-after-reload-timeout", f.restart) {
 		return
 	}
 	t.Run("stop", func(t *testing.T) {
@@ -160,11 +844,18 @@ func (f *execTest) start(t *testing.T) {
 		}
 		conf[section].(map[string]interface{})[field] = filepath.Join(f.dir, file)
 	}
-	keyPath, err := filepath.Abs("t/key")
+	keyData, err := os.ReadFile("t/key")
 	if err != nil {
 		t.Fatal(err)
 	}
+	keyPath := filepath.Join(f.dir, "key")
+	if err := os.WriteFile(keyPath, keyData, 0600); err != nil {
+		t.Fatal(err)
+	}
 	conf["Domains"].(map[string]interface{})["example.jp"].(map[string]interface{})["PrivateKeyFile"] = keyPath
+	if f.configure != nil {
+		f.configure(conf)
+	}
 	buf, err = yaml.Marshal(conf)
 	if err != nil {
 		t.Fatal(err)
@@ -229,6 +920,11 @@ func (f *execTest) start(t *testing.T) {
 			t.Fatalf("unexpected permission %s: %v", file.name, info.Mode().Perm())
 		}
 	}
+}
+
+// rawMilterHeader は Milter の LF 区切りの値をメール形式の CRLF に戻す。
+func rawMilterHeader(name, value string) string {
+	return name + ": " + strings.ReplaceAll(value, "\n", "\r\n") + "\r\n"
 }
 
 func testMilter(t *testing.T, socketPath string) {
@@ -373,7 +1069,7 @@ func testMilter(t *testing.T, socketPath string) {
 				InstanceNumber: 1,
 				AuthServId:     "example.jp",
 				Results: []string{
-					"spf=fail smtp.mailfrom=<test@example.com> smtp.helo=example.com",
+					"spf=fail smtp.mailfrom=example.com",
 					"arc=none",
 				},
 			},
@@ -468,7 +1164,7 @@ func testMilter(t *testing.T, socketPath string) {
 						if tc.expectDKIM == nil {
 							t.Fatalf("unexpected DKIM-Signature: %s", mAct.HeaderValue)
 						}
-						d, err := dkim.ParseSignature(fmt.Sprintf("%s: %s", mAct.HeaderName, mAct.HeaderValue))
+						d, err := dkim.ParseSignature(rawMilterHeader(mAct.HeaderName, mAct.HeaderValue))
 						if err != nil {
 							t.Fatalf("failed to parse DKIM-Signature: %v", err)
 						}
@@ -499,7 +1195,7 @@ func testMilter(t *testing.T, socketPath string) {
 						if tc.expectARCSignature == nil {
 							t.Fatalf("unexpected ARC-Message-Signature: %s", mAct.HeaderValue)
 						}
-						d, err := arc.ParseARCMessageSignature(fmt.Sprintf("%s: %s", mAct.HeaderName, mAct.HeaderValue))
+						d, err := arc.ParseARCMessageSignature(rawMilterHeader(mAct.HeaderName, mAct.HeaderValue))
 						if err != nil {
 							t.Fatalf("failed to parse ARC-Message-Signature: %v", err)
 						}
@@ -530,7 +1226,7 @@ func testMilter(t *testing.T, socketPath string) {
 						if tc.expectARCResults == nil {
 							t.Fatalf("unexpected ARC-Authentication-Results: %s", mAct.HeaderValue)
 						}
-						d, err := arc.ParseARCAuthenticationResults(fmt.Sprintf("%s: %s", mAct.HeaderName, mAct.HeaderValue))
+						d, err := arc.ParseARCAuthenticationResults(rawMilterHeader(mAct.HeaderName, mAct.HeaderValue))
 						if err != nil {
 							t.Fatalf("failed to parse ARC-Authentication-Results: %v", err)
 						}
@@ -554,7 +1250,7 @@ func testMilter(t *testing.T, socketPath string) {
 						if tc.expectARCSeal == nil {
 							t.Fatalf("unexpected ARC-Seal: %s", mAct.HeaderValue)
 						}
-						d, err := arc.ParseARCSeal(fmt.Sprintf("%s: %s", mAct.HeaderName, mAct.HeaderValue))
+						d, err := arc.ParseARCSeal(rawMilterHeader(mAct.HeaderName, mAct.HeaderValue))
 						if err != nil {
 							t.Fatalf("failed to parse ARC-Seal: %v", err)
 						}
@@ -745,9 +1441,14 @@ func (f *execTest) reloadInvalid(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.waitLog(t, offset, func(log string) bool { return strings.Contains(log, "failed to load config:") })
-	// 新しい子も設定を読めないためタイムアウトする。旧プロセスは処理を継続する。
-	f.waitLog(t, offset, func(log string) bool { return strings.Contains(log, "timed out waiting for child process readiness") })
 	f.checkSelector(t, "reloaded")
+	buf, err := os.ReadFile(filepath.Join(f.dir, "arcmilter.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(buf[offset:]), "child process started") {
+		t.Fatal("invalid configuration spawned a replacement child")
+	}
 }
 
 func (f *execTest) reloadTimeout(t *testing.T) {
@@ -824,7 +1525,7 @@ func (f *execTest) checkSelector(t *testing.T, selector string) {
 	for _, mod := range mods {
 		if strings.EqualFold(mod.HeaderName, "DKIM-Signature") {
 			count++
-			sig, err := dkim.ParseSignature(mod.HeaderName + ": " + mod.HeaderValue)
+			sig, err := dkim.ParseSignature(rawMilterHeader(mod.HeaderName, mod.HeaderValue))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -838,7 +1539,7 @@ func (f *execTest) checkSelector(t *testing.T, selector string) {
 	}
 }
 
-func Test_checkPidFile(t *testing.T) {
+func TestAcquirePidFile(t *testing.T) {
 	testCases := []struct {
 		name      string
 		fileExist bool
@@ -905,7 +1606,7 @@ func Test_checkPidFile(t *testing.T) {
 					t.Fatalf("failed to write pid file: %v", err)
 				}
 			}
-			err := checkPidFile(pidFile)
+			file, err := acquirePidFile(pidFile)
 			if tt.expectErr {
 				if err == nil {
 					t.Errorf("expected error, but got nil")
@@ -913,8 +1614,91 @@ func Test_checkPidFile(t *testing.T) {
 			} else {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
+					return
+				}
+				defer file.Close()
+				if second, err := acquirePidFile(pidFile); err == nil {
+					second.Close()
+					t.Error("concurrent parent acquired the same pid file")
+				}
+				buf, err := os.ReadFile(pidFile)
+				if err != nil || string(buf) != strconv.Itoa(os.Getpid()) {
+					t.Errorf("pid file content = %q, %v", buf, err)
 				}
 			}
 		})
+	}
+}
+
+func TestAcquirePidFileRejectsUnsafePaths(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, []byte("preserve"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "symlink.pid")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if file, err := acquirePidFile(link); err == nil {
+		file.Close()
+		t.Fatal("symlink pid file was accepted")
+	}
+	if got, err := os.ReadFile(target); err != nil || string(got) != "preserve" {
+		t.Fatalf("symlink target changed: %q, %v", got, err)
+	}
+
+	unsafe := filepath.Join(dir, "unsafe.pid")
+	if err := os.WriteFile(unsafe, []byte("preserve"), 0666); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(unsafe, 0666); err != nil {
+		t.Fatal(err)
+	}
+	if file, err := acquirePidFile(unsafe); err == nil {
+		file.Close()
+		t.Fatal("group/world-writable pid file was accepted")
+	}
+	if got, err := os.ReadFile(unsafe); err != nil || string(got) != "preserve" {
+		t.Fatalf("unsafe file changed: %q, %v", got, err)
+	}
+
+	hardlink := filepath.Join(dir, "hardlink.pid")
+	if err := os.Link(target, hardlink); err != nil {
+		t.Fatal(err)
+	}
+	if file, err := acquirePidFile(hardlink); err == nil {
+		file.Close()
+		t.Fatal("multiply-linked pid file was accepted")
+	}
+
+	tooLarge := filepath.Join(dir, "large.pid")
+	if err := os.WriteFile(tooLarge, []byte(strings.Repeat("1", 64)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if file, err := acquirePidFile(tooLarge); err == nil {
+		file.Close()
+		t.Fatal("oversized pid file was accepted")
+	}
+}
+
+func TestRemovePidFileDoesNotUnlinkReplacement(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "daemon.pid")
+	file, err := acquirePidFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path, filepath.Join(dir, "old.pid")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("replacement"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := removePidFile(path, file); err == nil {
+		t.Fatal("replacement pid file was removed")
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "replacement" {
+		t.Fatalf("replacement file changed: %q, %v", got, err)
 	}
 }

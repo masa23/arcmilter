@@ -22,6 +22,7 @@ func TestValidateConfigARCFrom(t *testing.T) {
 			c := createDefaultConfig()
 			c.MilterListen.Network = "tcp"
 			c.MilterListen.Address = "127.0.0.1:10025"
+			c.MilterListen.AllowTCPWithSigning = true
 			c.PidFile.Path = "/tmp/arcmilter.pid"
 			c.ControlSocketFile.Path = "/tmp/arcmilterctl.sock"
 			c.MyNetworks = []string{"127.0.0.0/8"}

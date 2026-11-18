@@ -41,7 +41,7 @@ func newSigningSession(t *testing.T, headers []string, key crypto.Signer) *Sessi
 		t.Fatal(err)
 	}
 	return &Session{
-		isARCSign: true, isDKIMSign: true,
+		isARCSign: true, isDKIMSign: true, authn: "unit-test",
 		rcptToDomain: "example.jp", fromDomain: "example.jp", mailFrom: "invalid",
 		mmauth: auth,
 		conf: &config.Config{

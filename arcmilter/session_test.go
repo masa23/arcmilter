@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"net"
 	"strings"
 	"testing"
 
@@ -39,6 +40,31 @@ func expectContinue(t *testing.T) func(*milter.Response, error) {
 	}
 }
 
+func TestEndOfMessageRequiresTrustedSendSourceWithoutMMAuth(t *testing.T) {
+	_, trusted, err := net.ParseCIDR("127.0.0.0/8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, mode, source string
+		want               *milter.Response
+	}{
+		{"send untrusted", "send", "192.0.2.2", milter.RespTempFail},
+		{"send trusted", "send", "127.0.0.1", milter.RespContinue},
+		{"receive untrusted", "receive", "192.0.2.2", milter.RespContinue},
+		{"disabled untrusted", "disabled", "192.0.2.2", milter.RespContinue},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Session{conf: &config.Config{ParsedMyNetworks: []*net.IPNet{trusted}}, remoteAddr: net.ParseIP(tc.source)}
+			s.conf.DKIM2Forwarding.Mode = tc.mode
+			got, err := s.EndOfMessage(nil)
+			if err != nil || got != tc.want {
+				t.Fatalf("response=%v error=%v, want %v", got, err, tc.want)
+			}
+		})
+	}
+}
+
 func newMessageSession(t *testing.T) (*Session, *messageModifier, *domainkey.DomainKey) {
 	t.Helper()
 	key, publicKey := signingKey(t)
@@ -55,9 +81,92 @@ func newMessageSession(t *testing.T) (*Session, *messageModifier, *domainkey.Dom
 	m := &messageModifier{}
 	t.Cleanup(func() { s.Cleanup(m) })
 	check := expectContinue(t)
-	check(s.Connect("remote.example", "inet", 25, "192.0.2.1", m))
+	check(s.Connect("remote.example", "tcp4", 25, "192.0.2.1", m))
 	check(s.Helo("remote.example", m))
 	return s, m, publicKey
+}
+
+func TestNewSMTPConnectionClearsTrustAndMessageState(t *testing.T) {
+	s, m, _ := newMessageSession(t)
+	_, network, err := net.ParseCIDR("127.0.0.0/8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.conf.ParsedMyNetworks = []*net.IPNet{network}
+	domain := s.conf.Domains["example.jp"]
+	domain.DKIM2 = true
+	s.conf.Domains["example.jp"] = domain
+	check := expectContinue(t)
+	check(s.Connect("localhost", "tcp4", 25, "127.0.0.1", m))
+	check(s.Helo("old-connection.example", m))
+	m.authn = "old-login"
+	check(s.MailFrom("sender@example.jp", "", m))
+	check(s.RcptTo("recipient@example.jp", "", m))
+	check(s.Header("From", "sender@example.jp", m))
+	check(s.Headers(m))
+	check(s.BodyChunk([]byte("unfinished body\r\n"), m))
+	s.dkim2Result = "dkim2=pass"
+	oldAuth, conf := s.mmauth, s.conf
+	if !s.trustedSigningSender() || s.dkim2Message == nil {
+		t.Fatal("fixture did not populate trusted connection and message state")
+	}
+	if err := s.NewConnection(m); err != nil {
+		t.Fatal(err)
+	}
+	if s.conf != conf || s.remoteAddr != nil || s.helo != "" || s.authn != "" || s.mailFrom != "" ||
+		s.from != "" || s.fromDomain != "" || s.rcptToDomain != "" || len(s.rcptTo) != 0 ||
+		s.mmauth != nil || s.dkim2Message != nil || s.dkim2Result != "" || s.isDKIMSign || s.isARCSign {
+		t.Fatal("new SMTP connection inherited previous connection or message state")
+	}
+	if _, err := oldAuth.Write([]byte("later bytes")); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("old message parser was not closed: %v", err)
+	}
+	check(s.Connect("unknown", "unknown", 0, "", m))
+	if s.trustedSigningSender() || s.conf.IsMyNetwork(s.remoteAddr) {
+		t.Fatal("unknown SMTP connection inherited trust")
+	}
+	m.authn = "new-login"
+	check(s.MailFrom("new@example.jp", "", m))
+	if s.authn != "new-login" || !s.trustedSigningSender() {
+		t.Fatal("current MAIL FROM authentication macro was not used")
+	}
+}
+
+func TestConnectDoesNotRetainOrInferSMTPClientTrust(t *testing.T) {
+	_, network, err := net.ParseCIDR("127.0.0.0/8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, family, address string
+		wantIP                string
+		trusted               bool
+	}{
+		{"new IPv4 client", "tcp4", "192.0.2.1", "192.0.2.1", false},
+		{"current loopback", "tcp4", "127.0.0.1", "127.0.0.1", true},
+		{"new IPv6 client", "tcp6", "2001:db8::1", "2001:db8::1", false},
+		{"invalid IP", "tcp4", "not-an-IP", "", false},
+		{"empty IP", "tcp6", "", "", false},
+		{"unknown family", "unknown", "", "", false},
+		{"Unix client", "unix", "/run/client.sock", "", false},
+		{"IP-shaped Unix path", "unix", "127.0.0.1", "", false},
+		{"unknown IP-shaped address", "unknown", "127.0.0.1", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Session{remoteAddr: net.ParseIP("127.0.0.1"), conf: &config.Config{ParsedMyNetworks: []*net.IPNet{network}}}
+			expectContinue(t)(s.Connect("client", tc.family, 0, tc.address, nil))
+			if tc.wantIP == "" {
+				if s.remoteAddr != nil {
+					t.Fatalf("unexpected SMTP-client IP: %s", s.remoteAddr)
+				}
+			} else if !s.remoteAddr.Equal(net.ParseIP(tc.wantIP)) {
+				t.Fatalf("SMTP-client IP=%s, want %s", s.remoteAddr, tc.wantIP)
+			}
+			if s.trustedSigningSender() != tc.trusted {
+				t.Fatalf("trusted=%v, want %v", s.trustedSigningSender(), tc.trusted)
+			}
+		})
+	}
 }
 
 func startMessage(t *testing.T, s *Session, m *messageModifier, authn, from, subject string, recipients []string) []string {
@@ -173,9 +282,9 @@ func TestSessionMessagesIndependent(t *testing.T) {
 		recipient string
 		dkim, arc bool
 	}{
-		{"signed again", "b@example.jp", "<b@example.jp>", true, true},
+		{"ARC signed again", "b@example.jp", "<b@example.jp>", false, true},
 		{"neither domain matches", "b@outside.example", "<b@outside.example>", false, false},
-		{"only From matches", "b@example.jp", "<b@outside.example>", true, false},
+		{"only From matches", "b@example.jp", "<b@outside.example>", false, false},
 		{"only recipient matches", "b@outside.example", "<b@example.jp>", false, true},
 		{"no From header", "", "<b@outside.example>", false, false},
 	} {
@@ -183,7 +292,7 @@ func TestSessionMessagesIndependent(t *testing.T) {
 			s, m, key := newMessageSession(t)
 			headers := startMessage(t, s, m, "", "a@example.jp", "first", []string{"<a@example.jp>"})
 			finishMessage(t, s, m, "first body\r\n")
-			checkMessageSignatures(t, m, headers, "first body\r\n", key, true, true)
+			checkMessageSignatures(t, m, headers, "first body\r\n", key, false, true)
 			headers = startMessage(t, s, m, "", tc.from, "second", []string{tc.recipient})
 			finishMessage(t, s, m, "second body\r\n")
 			checkMessageSignatures(t, m, headers, "second body\r\n", key, tc.dkim, tc.arc)
@@ -196,7 +305,47 @@ func TestSessionAuthenticationIsPerMessage(t *testing.T) {
 	for _, authn := range []string{"login-user", "", "other-user", ""} {
 		headers := startMessage(t, s, m, authn, "a@example.jp", "authentication", []string{"<a@example.jp>"})
 		finishMessage(t, s, m, "body\r\n")
-		checkMessageSignatures(t, m, headers, "body\r\n", key, true, authn == "")
+		checkMessageSignatures(t, m, headers, "body\r\n", key, authn != "", authn == "")
+	}
+}
+
+func TestDKIMSigningRequiresTrustedOriginOutsideForwardSend(t *testing.T) {
+	for _, tc := range []struct {
+		name, authn, mode string
+		myNetwork         bool
+		wantDKIM          bool
+		wantTempFail      bool
+	}{
+		{"external spoofed From", "", "disabled", false, false, false},
+		{"authenticated sender", "login-user", "disabled", false, true, false},
+		{"trusted network", "", "disabled", true, true, false},
+		{"forward send stage with authentication", "login-user", "send", false, false, true},
+		{"forward send stage from trusted network", "", "send", true, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, m, key := newMessageSession(t)
+			s.conf.DKIM2Forwarding.Mode = tc.mode
+			if tc.myNetwork {
+				_, network, err := net.ParseCIDR("192.0.2.0/24")
+				if err != nil {
+					t.Fatal(err)
+				}
+				s.conf.ParsedMyNetworks = []*net.IPNet{network}
+			}
+			headers := startMessage(t, s, m, tc.authn, "alice@example.jp", "origin trust", []string{"<bob@outside.example>"})
+			if tc.wantTempFail {
+				expectContinue(t)(s.Headers(m))
+				expectContinue(t)(s.BodyChunk([]byte("body\r\n"), m))
+				response, err := s.EndOfMessage(m)
+				if err != nil || response != milter.RespTempFail {
+					t.Fatalf("untrusted send route response=%v error=%v", response, err)
+				}
+				checkMessageSignatures(t, m, headers, "body\r\n", key, false, false)
+				return
+			}
+			finishMessage(t, s, m, "body\r\n")
+			checkMessageSignatures(t, m, headers, "body\r\n", key, tc.wantDKIM, false)
+		})
 	}
 }
 
@@ -242,7 +391,7 @@ func TestSessionAbort(t *testing.T) {
 				}
 				headers := startMessage(t, s, m, "", from, "after abort", []string{recipient})
 				finishMessage(t, s, m, "new body\r\n")
-				checkMessageSignatures(t, m, headers, "new body\r\n", key, signNext, signNext)
+				checkMessageSignatures(t, m, headers, "new body\r\n", key, false, signNext)
 			})
 		}
 	}
@@ -255,7 +404,7 @@ func TestSessionMailFromClosesUnfinishedMessage(t *testing.T) {
 	headers := startMessage(t, s, m, "", "b@example.jp", "replacement", []string{"<b@example.jp>"})
 	checkClosedMessage(t, old)
 	finishMessage(t, s, m, "replacement body\r\n")
-	checkMessageSignatures(t, m, headers, "replacement body\r\n", key, true, true)
+	checkMessageSignatures(t, m, headers, "replacement body\r\n", key, false, true)
 }
 
 func TestSessionCleanup(t *testing.T) {
